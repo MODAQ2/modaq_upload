@@ -2,6 +2,8 @@
 
 {% block title %}Upload Files - {{ super() }}{% endblock %}
 
+{% block body_attrs %}data-page="upload"{% endblock %}
+
 {% block content %}
 <div class="space-y-6">
     <!-- Header -->
@@ -17,7 +19,7 @@
         <div class="bg-white rounded-lg shadow px-6 py-4">
             <div class="flex items-center justify-between">
                 <!-- Step 1: Select -->
-                <div class="flex items-center cursor-pointer hover:opacity-80" data-step="1" onclick="goToStep(1)" title="Go back to file selection">
+                <div class="flex items-center cursor-pointer hover:opacity-80" data-step="1" data-action="go-to-step" title="Go back to file selection">
                     <div class="step-circle flex items-center justify-center w-8 h-8 rounded-full border-2 border-gray-300 bg-white text-gray-500 font-semibold text-sm">
                         1
                     </div>
@@ -434,13 +436,3 @@
 </div>
 {% endblock %}
 
-{% block scripts %}
-<script>
-    // Initialize upload functionality when page loads
-    document.addEventListener('DOMContentLoaded', function() {
-        if (typeof initUpload === 'function') {
-            initUpload();
-        }
-    });
-</script>
-{% endblock %}

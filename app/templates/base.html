@@ -241,7 +241,7 @@
 
     {% block head %}{% endblock %}
 </head>
-<body class="bg-gray-50 min-h-screen flex flex-col font-roboto">
+<body class="bg-gray-50 min-h-screen flex flex-col font-roboto" {% block body_attrs %}{% endblock %}>
     <!-- NLR Header -->
     <header class="nrel-header">
         <!-- Top section with title and logo -->
@@ -272,7 +272,7 @@
                 <!-- Spacer to push right-side items -->
                 <div class="flex-grow"></div>
                 <!-- Version badge (clickable to open About modal) -->
-                <button onclick="openAboutModal()" class="text-xs text-nrel-gray px-3 py-1 hover:text-nrel-blue transition-colors">
+                <button data-action="open-about" class="text-xs text-nrel-gray px-3 py-1 hover:text-nrel-blue transition-colors">
                     v<span id="header-version">...</span>
                 </button>
             </div>
@@ -350,7 +350,7 @@
             <!-- Modal Header -->
             <div class="bg-nrel-blue text-white px-6 py-4 flex justify-between items-center">
                 <h2 class="text-lg font-semibold">About</h2>
-                <button onclick="closeAboutModal()" class="text-white hover:text-gray-200">
+                <button data-action="close-about" class="text-white hover:text-gray-200">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                     </svg>
@@ -377,7 +377,7 @@
 
             <!-- Modal Footer -->
             <div class="bg-gray-50 px-6 py-3 flex justify-end">
-                <button onclick="closeAboutModal()"
+                <button data-action="close-about"
                         class="px-4 py-2 bg-nrel-gray text-white rounded hover:bg-opacity-90 text-sm">
                     Close
                 </button>
@@ -386,7 +386,7 @@
     </div>
 
     <!-- Application JavaScript -->
-    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
 
     {% block scripts %}{% endblock %}
 </body>

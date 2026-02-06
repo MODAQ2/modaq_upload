@@ -2,6 +2,8 @@
 
 {% block title %}Browse Uploaded Files - {{ super() }}{% endblock %}
 
+{% block body_attrs %}data-page="files"{% endblock %}
+
 {% block content %}
 <div class="space-y-6">
     <!-- Header -->
@@ -106,13 +108,3 @@
 </div>
 {% endblock %}
 
-{% block scripts %}
-<script>
-    // Initialize file browser when page loads
-    document.addEventListener('DOMContentLoaded', function() {
-        if (typeof initFileBrowser === 'function') {
-            initFileBrowser();
-        }
-    });
-</script>
-{% endblock %}

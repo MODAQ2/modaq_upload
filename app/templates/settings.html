@@ -2,6 +2,8 @@
 
 {% block title %}Settings - {{ super() }}{% endblock %}
 
+{% block body_attrs %}data-page="settings"{% endblock %}
+
 {% block content %}
 <div class="space-y-6">
     <!-- Header -->
@@ -94,7 +96,8 @@
     <div class="bg-white rounded-lg shadow overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-200">
             <h2 class="text-lg font-semibold text-gray-900">Application Updates</h2>
-            <p class="text-gray-600 text-sm mt-1">Update the application and modaq_toolkit</p>
+            <p class="text-gray-600 text-sm mt-1">Download the latest updates from <a
+              href="https://github.com/MODAQ2/modaq_upload">GitHub/MODAQ2</a></p>
         </div>
 
         <!-- Version Info -->
@@ -236,13 +239,3 @@
 </div>
 {% endblock %}
 
-{% block scripts %}
-<script>
-    // Initialize settings page when loaded
-    document.addEventListener('DOMContentLoaded', function() {
-        if (typeof initSettings === 'function') {
-            initSettings();
-        }
-    });
-</script>
-{% endblock %}
