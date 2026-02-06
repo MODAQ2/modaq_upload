@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Settings</h1>
+        <p class="text-gray-600 mt-1">Configure AWS credentials and S3 bucket</p>
+    </div>
+
+    <!-- Settings Form -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <form id="settings-form" class="divide-y divide-gray-200">
+            <!-- AWS Profile -->
+            <div class="px-6 py-4">
+                <label for="aws-profile" class="block text-sm font-medium text-gray-700">AWS Profile</label>
+                <select id="aws-profile"
+                        class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-nrel-blue focus:border-nrel-blue rounded-md">
+                    <option value="">Loading profiles...</option>
+                </select>
+                <p class="mt-1 text-sm text-gray-500">Select AWS profile from ~/.aws/credentials</p>
+            </div>
+
+            <!-- AWS Region -->
+            <div class="px-6 py-4">
+                <label for="aws-region-select" class="block text-sm font-medium text-gray-700">AWS Region</label>
+                <select id="aws-region-select"
+                        class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-nrel-blue focus:border-nrel-blue rounded-md">
+                    <option value="us-west-2">US West (Oregon) - us-west-2 (NLR Default)</option>
+                    <option value="us-west-1">US West (N. California) - us-west-1</option>
+                    <option value="us-east-1">US East (N. Virginia) - us-east-1</option>
+                    <option value="us-east-2">US East (Ohio) - us-east-2</option>
+                    <option value="us-gov-west-1">AWS GovCloud (US-West) - us-gov-west-1</option>
+                    <option value="us-gov-east-1">AWS GovCloud (US-East) - us-gov-east-1</option>
+                    <option value="other">Other...</option>
+                </select>
+                <input type="text" id="aws-region-custom"
+                       class="mt-2 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-nrel-blue focus:border-nrel-blue hidden"
+                       placeholder="e.g. eu-west-1">
+                <p id="aws-region-help" class="mt-1 text-sm text-gray-500 hidden">
+                    See <a href="https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions.html"
+                           target="_blank" rel="noopener noreferrer"
+                           class="text-nrel-blue hover:underline">AWS Regions documentation</a> for available regions.
+                </p>
+            </div>
+
+            <!-- S3 Bucket -->
+            <div class="px-6 py-4">
+                <label for="s3-bucket" class="block text-sm font-medium text-gray-700">S3 Bucket</label>
+                <input type="text" id="s3-bucket"
+                       class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-nrel-blue focus:border-nrel-blue"
+                       placeholder="my-mcap-bucket">
+                <p class="mt-1 text-sm text-gray-500">Name of the S3 bucket to upload files to</p>
+            </div>
+
+            <!-- Default Upload Folder -->
+            <div class="px-6 py-4">
+                <label for="default-folder" class="block text-sm font-medium text-gray-700">Default Upload Folder</label>
+                <input type="text" id="default-folder"
+                       class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-nrel-blue focus:border-nrel-blue"
+                       placeholder="/path/to/mcap/files">
+                <p class="mt-1 text-sm text-gray-500">Default folder to open when selecting files (optional)</p>
+            </div>
+
+            <!-- Connection Test -->
+            <div class="px-6 py-4 bg-gray-50">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <span class="text-sm font-medium text-gray-700">Connection Status</span>
+                        <div id="connection-status" class="mt-1 text-sm text-gray-500">
+                            Not tested
+                        </div>
+                    </div>
+                    <button type="button" id="test-connection-btn"
+                            class="px-4 py-2 bg-nrel-blue text-white rounded-md hover:bg-nrel-blue-light transition-colors">
+                        Test Connection
+                    </button>
+                </div>
+            </div>
+
+            <!-- Save Button -->
+            <div class="px-6 py-4 flex justify-end">
+                <button type="submit"
+                        class="px-6 py-2 bg-nrel-green text-white rounded-md hover:bg-nrel-green-light transition-colors">
+                    Save Settings
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Application Update Section -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Application Updates</h2>
+            <p class="text-gray-600 text-sm mt-1">Update the application and modaq_toolkit</p>
+        </div>
+
+        <!-- Version Info -->
+        <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+            <div class="grid grid-cols-4 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-500">Version:</span>
+                    <span id="pkg-version" class="ml-2 font-semibold text-nrel-blue">-</span>
+                </div>
+                <div>
+                    <span class="text-gray-500">Branch:</span>
+                    <span id="git-branch" class="ml-2 font-medium text-gray-900">-</span>
+                </div>
+                <div>
+                    <span class="text-gray-500">Commit:</span>
+                    <span id="git-commit" class="ml-2 font-mono text-gray-900">-</span>
+                </div>
+                <div>
+                    <span class="text-gray-500">Last Updated:</span>
+                    <span id="git-date" class="ml-2 text-gray-900">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Update Controls -->
+        <div class="px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <div id="update-status" class="text-sm text-gray-600">
+                        Click "Check for Updates" to see if updates are available
+                    </div>
+                </div>
+                <div class="flex space-x-4">
+                    <button type="button" id="check-updates-btn"
+                            class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors">
+                        Check for Updates
+                    </button>
+                    <button type="button" id="run-update-btn"
+                            class="px-4 py-2 bg-nrel-yellow text-white rounded-md hover:bg-nrel-yellow-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled>
+                        Update Application
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Update Log -->
+        <div id="update-log" class="hidden px-6 py-4 border-t border-gray-200">
+            <h3 class="text-sm font-medium text-gray-700 mb-2">Update Log</h3>
+            <pre id="update-output" class="bg-gray-900 text-green-400 p-4 rounded-md text-xs overflow-x-auto max-h-64 overflow-y-auto"></pre>
+        </div>
+    </div>
+
+    <!-- Cache Management Section -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Upload Cache</h2>
+            <p class="text-gray-600 text-sm mt-1">Local cache for tracking uploaded files and detecting duplicates</p>
+        </div>
+
+        <!-- Cache Stats -->
+        <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+            <div class="grid grid-cols-4 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-500">Cached Files:</span>
+                    <span id="cache-total" class="ml-2 font-semibold text-gray-900">-</span>
+                </div>
+                <div>
+                    <span class="text-gray-500">Exists:</span>
+                    <span id="cache-exists" class="ml-2 font-medium text-green-600">-</span>
+                </div>
+                <div>
+                    <span class="text-gray-500">Deleted:</span>
+                    <span id="cache-deleted" class="ml-2 font-medium text-red-600">-</span>
+                </div>
+                <div>
+                    <span class="text-gray-500">Last Sync:</span>
+                    <span id="cache-last-sync" class="ml-2 text-gray-900">Never</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sync Controls -->
+        <div class="px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Sync with AWS</span>
+                    <p class="text-sm text-gray-500">Reconcile cache with actual S3 bucket state (marks deleted files)</p>
+                </div>
+                <div class="flex space-x-4">
+                    <button type="button" id="sync-cache-btn"
+                            class="px-4 py-2 bg-nrel-blue text-white rounded-md hover:bg-nrel-blue-light transition-colors">
+                        Sync Cache with AWS
+                    </button>
+                </div>
+            </div>
+            <div id="sync-status" class="mt-2 text-sm text-gray-600 hidden"></div>
+        </div>
+    </div>
+
+    <!-- Danger Zone -->
+    <div class="bg-white rounded-lg shadow overflow-hidden border border-red-200">
+        <div class="px-6 py-4 bg-red-50 border-b border-red-200">
+            <h2 class="text-lg font-semibold text-red-700">Danger Zone</h2>
+        </div>
+        <div class="px-6 py-4 space-y-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Clear Browser Cache</span>
+                    <p class="text-sm text-gray-500">Clear remembered folders and local preferences</p>
+                </div>
+                <button type="button" id="clear-cache-btn"
+                        class="px-4 py-2 bg-orange-500 text-white rounded-md hover:bg-orange-600 transition-colors">
+                    Clear Cache
+                </button>
+            </div>
+            <div class="flex items-center justify-between pt-4 border-t border-gray-200">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Clear Upload Cache</span>
+                    <p class="text-sm text-gray-500">Delete all cached file records for current bucket</p>
+                </div>
+                <button type="button" id="invalidate-cache-btn"
+                        class="px-4 py-2 bg-orange-500 text-white rounded-md hover:bg-orange-600 transition-colors">
+                    Clear Upload Cache
+                </button>
+            </div>
+            <div class="flex items-center justify-between pt-4 border-t border-gray-200">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Reset Settings</span>
+                    <p class="text-sm text-gray-500">Reset all settings to defaults</p>
+                </div>
+                <button type="button" id="reset-settings-btn"
+                        class="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors">
+                    Reset to Defaults
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Initialize settings page when loaded
+    document.addEventListener('DOMContentLoaded', function() {
+        if (typeof initSettings === 'function') {
+            initSettings();
+        }
+    });
+</script>
+{% endblock %}

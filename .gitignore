@@ -55,6 +55,12 @@ dmypy.json
 # ruff
 .ruff_cache/
 
+# Node.js
+node_modules/
+
+# JS coverage
+htmlcov-js/
+
 # OS
 .DS_Store
 Thumbs.db
