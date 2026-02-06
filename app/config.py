@@ -27,6 +27,7 @@ ENV_AWS_PROFILE = "MODAQ_AWS_PROFILE"
 ENV_AWS_REGION = "MODAQ_AWS_REGION"
 ENV_S3_BUCKET = "MODAQ_S3_BUCKET"
 ENV_DEFAULT_UPLOAD_FOLDER = "MODAQ_DEFAULT_UPLOAD_FOLDER"
+ENV_DISPLAY_NAME = "MODAQ_DISPLAY_NAME"
 
 
 def get_package_version() -> str:
@@ -77,6 +78,7 @@ class Settings:
             "aws_region": "us-west-2",
             "s3_bucket": "",
             "default_upload_folder": "",
+            "display_name": "MODAQ Uploader",
         }
 
         # Load from settings.default.json if it exists
@@ -95,6 +97,7 @@ class Settings:
             "aws_region": os.environ.get(ENV_AWS_REGION),
             "s3_bucket": os.environ.get(ENV_S3_BUCKET),
             "default_upload_folder": os.environ.get(ENV_DEFAULT_UPLOAD_FOLDER),
+            "display_name": os.environ.get(ENV_DISPLAY_NAME),
         }
 
         # Only apply non-None environment values
@@ -154,6 +157,11 @@ class Settings:
     def default_upload_folder(self) -> str:
         """Get the default upload folder path."""
         return str(self._settings.get("default_upload_folder", ""))
+
+    @property
+    def display_name(self) -> str:
+        """Get the display name for the application."""
+        return str(self._settings.get("display_name", "MODAQ Uploader"))
 
 
 def get_settings() -> Settings:
