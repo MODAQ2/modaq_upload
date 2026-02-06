@@ -1,0 +1,55 @@
+[project]
+name = "modaq-upload"
+version = "0.1.0"
+description = "Python/Flask web application for uploading MODAQ data to Amazon AWS S3 buckets"
+requires-python = ">=3.11"
+authors = [
+    { name = "Andrew Simms", email = "andrew.simms@nlr.gov" },
+]
+keywords = ["modaq", "upload", "s3",  "warine-energy"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "ANN", # flake8-annotations
+]
+ignore = [
+    "ANN401",  # Allow Any type in certain cases
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = [
+    "modaq_toolkit.*",
+    "moto.*",
+    "flask.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
