@@ -1,0 +1,27 @@
+[Unit]
+Description=MODAQ Upload
+After=network.target
+
+[Service]
+Type=simple
+User=modaq
+Group=modaq
+WorkingDirectory=/opt/modaq-upload
+Environment="PATH=/opt/modaq-upload/venv/bin"
+ExecStart=/opt/modaq-upload/venv/bin/gunicorn \
+    --bind 0.0.0.0:8080 \
+    --workers 2 \
+    --threads 4 \
+    --timeout 300 \
+    --access-logfile /var/log/modaq-upload/access.log \
+    --error-logfile /var/log/modaq-upload/error.log \
+    wsgi:app
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
