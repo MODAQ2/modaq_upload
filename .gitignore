@@ -3,7 +3,7 @@ settings.json
 .env
 
 # SQLite cache
-s3_cache.db
+modaq_upload_cache.db
 
 # Python
 __pycache__/
