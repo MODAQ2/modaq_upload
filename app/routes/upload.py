@@ -11,7 +11,12 @@ from typing import Any
 from flask import Blueprint, Response, jsonify, request
 
 from app.config import get_settings
-from app.services.upload_manager import FileUploadState, UploadJob, get_upload_manager
+from app.services.upload_manager import (
+    FileUploadState,
+    UploadJob,
+    UploadStatus,
+    get_upload_manager,
+)
 
 upload_bp = Blueprint("upload", __name__)
 
@@ -263,7 +268,12 @@ def get_active_job() -> tuple[Response, int]:
     manager = get_upload_manager()
 
     # Find the most recent job that is still active (not completed/failed/cancelled)
-    active_statuses = {"pending", "analyzing", "ready", "uploading"}
+    active_statuses = {
+        UploadStatus.PENDING,
+        UploadStatus.ANALYZING,
+        UploadStatus.READY,
+        UploadStatus.UPLOADING,
+    }
 
     active_job: UploadJob | None = None
     for job in manager.jobs.values():
