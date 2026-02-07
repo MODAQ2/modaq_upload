@@ -30,14 +30,11 @@ export function resetUpload() {
 
   hideUploadSteps();
 
-  document.getElementById('drop-zone')?.classList.remove('hidden');
+  document.getElementById('folder-browser-panel')?.classList.remove('hidden');
   document.getElementById('analysis-section')?.classList.add('hidden');
   document.getElementById('progress-section')?.classList.add('hidden');
   document.getElementById('completion-section')?.classList.add('hidden');
   document.getElementById('scan-results-section')?.classList.add('hidden');
-
-  const fileInput = /** @type {HTMLInputElement | null} */ (document.getElementById('file-input'));
-  if (fileInput) fileInput.value = '';
 
   state.selectedFolderPath = null;
   state.scanFilePaths = [];

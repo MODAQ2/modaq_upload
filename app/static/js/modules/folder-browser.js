@@ -1,32 +1,17 @@
 import { connectAnalysisProgressStream, initializeAnalysisTableFromPaths } from './analysis.js';
 /**
- * Folder browser modal and scan results for folder-based upload.
+ * Inline folder browser and scan results for folder-based upload.
  */
 import state from './state.js';
 import { setUploadStep, showUploadSteps } from './stepper.js';
 import { formatBytes, showNotification } from './utils.js';
 
 /**
- * Initialize folder browser modal handlers.
+ * Initialize the inline folder browser and auto-load initial folder.
  */
-export function initFolderBrowser() {
-  const modal = document.getElementById('folder-browser-modal');
-  if (!modal) return;
-
-  document.getElementById('close-folder-browser')?.addEventListener('click', closeFolderBrowser);
-  document.getElementById('cancel-folder-browser')?.addEventListener('click', closeFolderBrowser);
-
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal.querySelector('.fixed.inset-0')) {
-      closeFolderBrowser();
-    }
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
-      closeFolderBrowser();
-    }
-  });
+export async function initFolderBrowser() {
+  const panel = document.getElementById('folder-browser-panel');
+  if (!panel) return;
 
   document.getElementById('select-current-folder')?.addEventListener('click', selectCurrentFolder);
 
@@ -66,24 +51,9 @@ export function initFolderBrowser() {
       }
     });
   }
-}
 
-export function closeFolderBrowser() {
-  const modal = document.getElementById('folder-browser-modal');
-  if (modal) modal.classList.add('hidden');
-  document.body.style.overflow = '';
-}
-
-/**
- * Open the folder browser modal.
- */
-export async function openFolderBrowser() {
-  const modal = document.getElementById('folder-browser-modal');
-  if (modal) modal.classList.remove('hidden');
-  document.body.style.overflow = 'hidden';
-
+  // Auto-load: use last folder or default from settings
   const lastFolder = localStorage.getItem('lastUploadFolder');
-
   if (lastFolder) {
     loadFolderBrowser(lastFolder);
   } else {
@@ -296,8 +266,6 @@ async function selectCurrentFolder() {
     state.selectedFolderPath = folderPath;
     localStorage.setItem('lastUploadFolder', folderPath);
 
-    closeFolderBrowser();
-
     const prefilterResponse = await fetch('/api/upload/bulk-analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -325,7 +293,7 @@ async function selectCurrentFolder() {
  */
 function showScanResults(scanData, prefilterStats) {
   const scanSection = document.getElementById('scan-results-section');
-  const dropZone = document.getElementById('drop-zone');
+  const browserPanel = document.getElementById('folder-browser-panel');
 
   showUploadSteps(2);
 
@@ -369,7 +337,7 @@ function showScanResults(scanData, prefilterStats) {
     startBtn.disabled = (prefilterStats.to_analyze || scanData.total_count) === 0;
   }
 
-  if (dropZone) dropZone.classList.add('hidden');
+  if (browserPanel) browserPanel.classList.add('hidden');
   if (scanSection) scanSection.classList.remove('hidden');
 }
 

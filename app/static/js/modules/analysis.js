@@ -1,9 +1,8 @@
 /**
- * File analysis/validation (Step 3) and handleFiles entry point.
+ * File analysis/validation (Step 3).
  */
 import state from './state.js';
-import { STEP_3_VALIDATED, setUploadStep, showUploadSteps } from './stepper.js';
-import { resetUpload } from './upload-control.js';
+import { STEP_3_VALIDATED, setUploadStep } from './stepper.js';
 import { connectProgressStream, showCompletionSummary, updateProgressUI } from './upload-exec.js';
 import { formatBytes, showNotification } from './utils.js';
 
@@ -23,18 +22,18 @@ export async function checkForActiveJob() {
 
     if (job.status === 'analyzing') {
       setUploadStep(3);
-      document.getElementById('drop-zone')?.classList.add('hidden');
+      document.getElementById('folder-browser-panel')?.classList.add('hidden');
       document.getElementById('analysis-section')?.classList.remove('hidden');
       initializeAnalysisTableFromJob(job);
       connectAnalysisProgressStream(state.currentJobId);
     } else if (job.status === 'ready') {
       setUploadStep(3);
-      document.getElementById('drop-zone')?.classList.add('hidden');
+      document.getElementById('folder-browser-panel')?.classList.add('hidden');
       document.getElementById('analysis-section')?.classList.remove('hidden');
       displayAnalysisResults(job);
     } else if (job.status === 'uploading') {
       setUploadStep(4);
-      document.getElementById('drop-zone')?.classList.add('hidden');
+      document.getElementById('folder-browser-panel')?.classList.add('hidden');
       document.getElementById('progress-section')?.classList.remove('hidden');
       connectProgressStream();
     } else if (
@@ -43,7 +42,7 @@ export async function checkForActiveJob() {
       job.status === 'cancelled'
     ) {
       setUploadStep(5);
-      document.getElementById('drop-zone')?.classList.add('hidden');
+      document.getElementById('folder-browser-panel')?.classList.add('hidden');
       document.getElementById('completion-section')?.classList.remove('hidden');
       showCompletionSummary(job);
     }
@@ -116,115 +115,6 @@ function initializeAnalysisTableFromJob(job) {
 
   const uploadBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById('upload-btn'));
   if (uploadBtn) uploadBtn.disabled = true;
-}
-
-/**
- * Handle files from drag-drop or file input.
- * @param {File[]} files
- */
-export async function handleFiles(files) {
-  const formData = new FormData();
-  for (const file of files) {
-    formData.append('files', file);
-  }
-
-  showUploadSteps(3);
-
-  document.getElementById('drop-zone')?.classList.add('hidden');
-  document.getElementById('analysis-section')?.classList.remove('hidden');
-
-  initializeAnalysisTable(files);
-
-  try {
-    const response = await fetch('/api/upload/analyze', {
-      method: 'POST',
-      body: formData,
-    });
-
-    const data = await response.json();
-
-    if (!response.ok && response.status !== 202) {
-      throw new Error(data.error || 'Analysis failed');
-    }
-
-    state.currentJobId = data.job_id;
-
-    if (response.status === 202) {
-      connectAnalysisProgressStream(data.job_id);
-    } else {
-      displayAnalysisResults(data);
-    }
-  } catch (error) {
-    showNotification(/** @type {Error} */ (error).message, 'error');
-    resetUpload();
-  }
-}
-
-/**
- * Initialize the analysis table with placeholder rows.
- * @param {File[]} files
- */
-function initializeAnalysisTable(files) {
-  const tbody = document.getElementById('file-table-body');
-  if (!tbody) return;
-
-  tbody.innerHTML = files
-    .map(
-      (file) => `
-        <tr class="file-item" data-filename="${file.name}" data-is-analyzed="false" data-is-duplicate="false">
-            <td class="px-4 py-3">
-                <div class="flex items-center min-w-0">
-                    <svg class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <span class="text-sm font-medium text-gray-900 truncate" title="${file.name}">${file.name}</span>
-                </div>
-            </td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatBytes(file.size)}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">-</td>
-            <td class="px-4 py-3 text-sm text-gray-500 truncate">-</td>
-            <td class="px-4 py-3 whitespace-nowrap">
-                <span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 inline-flex items-center">
-                    <svg class="spinner h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Analyzing
-                </span>
-            </td>
-        </tr>
-    `,
-    )
-    .join('');
-
-  const totalFiles = document.getElementById('total-files');
-  if (totalFiles) totalFiles.textContent = String(files.length);
-
-  const totalSize = document.getElementById('total-size');
-  if (totalSize) totalSize.textContent = formatBytes(files.reduce((sum, f) => sum + f.size, 0));
-
-  const duplicateCount = document.getElementById('duplicate-count');
-  if (duplicateCount) duplicateCount.textContent = '0';
-
-  const uploadBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById('upload-btn'));
-  if (uploadBtn) uploadBtn.disabled = true;
-
-  const analysisCompleted = document.getElementById('analysis-completed');
-  if (analysisCompleted) analysisCompleted.textContent = '0';
-
-  const analysisTotal = document.getElementById('analysis-total');
-  if (analysisTotal) analysisTotal.textContent = String(files.length);
-
-  const analysisPercent = document.getElementById('analysis-percent');
-  if (analysisPercent) analysisPercent.textContent = '0%';
-
-  const analysisProgressBar = /** @type {HTMLElement | null} */ (
-    document.getElementById('analysis-progress-bar')
-  );
-  if (analysisProgressBar) analysisProgressBar.style.width = '0%';
-
-  document.getElementById('analysis-progress')?.classList.remove('hidden');
 }
 
 /**
