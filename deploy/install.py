@@ -19,6 +19,10 @@ LOG_DIR = Path("/var/log/modaq-upload")
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_DIR = SCRIPT_DIR.parent
 
+PYTHON_MAJOR = 3
+PYTHON_MINOR = 11
+PYTHON_VERSION = f"python{PYTHON_MAJOR}.{PYTHON_MINOR}"
+
 
 def run(cmd: list[str] | str, check: bool = True, **kwargs) -> subprocess.CompletedProcess:
     """Run a command and print it."""
@@ -62,9 +66,20 @@ def main() -> int:
     print("Installing system dependencies...")
     if pkg_name == "apt":
         run(["apt-get", "update"])
-    packages = ["python3", "python3-pip", "python3-venv", "git"]
+        packages = [PYTHON_VERSION, f"{PYTHON_VERSION}-venv", "git"]
+    elif pkg_name in ("dnf", "yum"):
+        packages = [PYTHON_VERSION, f"{PYTHON_VERSION}-pip", "git"]
+    else:
+        packages = [PYTHON_VERSION, "git"]
     run(pkg_install + packages)
     print()
+
+    # Verify Python 3.11 is available
+    python_bin = shutil.which(PYTHON_VERSION)
+    if python_bin is None:
+        print(f"Error: {PYTHON_VERSION} not found after install. Install it manually and retry.")
+        return 1
+    print(f"Using Python: {python_bin}")
 
     print("Creating application user...")
     if not user_exists(APP_USER):
@@ -100,10 +115,10 @@ def main() -> int:
             print(f"  Copied: {name}")
     print()
 
-    # Create Python virtual environment
+    # Create Python virtual environment with 3.11
     print("Creating Python virtual environment...")
     venv_dir = APP_DIR / "venv"
-    run([sys.executable, "-m", "venv", str(venv_dir)])
+    run([python_bin, "-m", "venv", str(venv_dir)])
     print()
 
     # Install Python dependencies
