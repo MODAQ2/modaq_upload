@@ -10,7 +10,7 @@
     <div class="flex items-center justify-between">
         <div>
             <h1 class="text-2xl font-bold text-gray-900">Upload MCAP Files</h1>
-            <p class="text-gray-600 mt-1">Drag and drop files or select a folder to upload to S3</p>
+            <p class="text-gray-600 mt-1">Select a folder to upload MCAP files to MODAQ Cloud (NLR AWS S3)</p>
         </div>
     </div>
 
@@ -80,97 +80,48 @@
         </div>
     </div>
 
-    <!-- Drop Zone -->
-    <div id="drop-zone"
-         class="drop-zone border-2 border-dashed border-gray-300 rounded-lg p-12 text-center cursor-pointer hover:border-nrel-blue transition-colors">
-        <svg class="mx-auto h-16 w-16 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-        </svg>
-        <p class="mt-4 text-lg text-gray-600">Drop MCAP files here</p>
-        <p class="mt-2 text-sm text-gray-500">or click to select files</p>
-        <input type="file" id="file-input" multiple accept=".mcap" class="hidden">
-
-        <!-- Folder selection -->
-        <div class="mt-4 pt-4 border-t border-gray-200">
-            <button id="folder-btn"
-                    class="px-6 py-3 bg-nrel-blue text-white rounded-md hover:bg-nrel-blue-light transition-colors">
-                Select Folder
-            </button>
-            <p class="mt-2 text-xs text-gray-400">
-                Browse and select a folder containing MCAP files
-            </p>
+    <!-- Inline Folder Browser -->
+    <div id="folder-browser-panel" class="bg-white rounded-lg shadow overflow-hidden">
+        <!-- Quick Links -->
+        <div id="folder-quick-links" class="px-6 py-2 bg-gray-50 border-b border-gray-200 flex items-center space-x-2 overflow-x-auto">
+            <!-- Quick links will be inserted here -->
         </div>
-    </div>
 
-    <!-- Folder Browser Modal -->
-    <div id="folder-browser-modal" class="hidden fixed inset-0 z-50 overflow-y-auto">
-        <div class="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:p-0">
-            <!-- Backdrop -->
-            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"></div>
-
-            <!-- Modal Panel -->
-            <div class="relative bg-white rounded-lg shadow-xl transform transition-all sm:max-w-4xl sm:w-full">
-                <!-- Header -->
-                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-900">Select Folder</h3>
-                    <button id="close-folder-browser" class="text-gray-400 hover:text-gray-600">
-                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                    </button>
-                </div>
-
-                <!-- Quick Links -->
-                <div id="folder-quick-links" class="px-6 py-2 bg-gray-50 border-b border-gray-200 flex items-center space-x-2 overflow-x-auto">
-                    <!-- Quick links will be inserted here -->
-                </div>
-
-                <!-- Breadcrumb Navigation -->
-                <div class="px-6 py-2 bg-gray-50 border-b border-gray-200">
-                    <div id="folder-breadcrumb" class="flex items-center space-x-1 text-sm overflow-x-auto">
-                        <!-- Breadcrumbs will be inserted here -->
-                    </div>
-                </div>
-
-                <!-- Current Path Info -->
-                <div class="px-6 py-2 bg-blue-50 border-b border-gray-200 flex items-center justify-between">
-                    <span class="text-sm text-blue-800" title="Does not include files in subfolders">
-                        <span id="folder-mcap-count">0</span> MCAP files in this folder (not subfolders)
-                    </span>
-                    <button id="select-current-folder"
-                            class="px-4 py-1 bg-nrel-green text-white text-sm rounded-md hover:bg-nrel-green-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                        Select This Folder
-                    </button>
-                </div>
-
-                <!-- Folder List -->
-                <div id="folder-list" class="max-h-96 overflow-y-auto divide-y divide-gray-200">
-                    <!-- Folders will be inserted here -->
-                </div>
-
-                <!-- Loading State -->
-                <div id="folder-loading" class="hidden p-8 text-center">
-                    <svg class="spinner h-8 w-8 mx-auto text-nrel-blue" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    <p class="mt-2 text-gray-500">Loading...</p>
-                </div>
-
-                <!-- Error State -->
-                <div id="folder-error" class="hidden p-8 text-center">
-                    <p class="text-red-600" id="folder-error-message">Error loading folder</p>
-                </div>
-
-                <!-- Footer -->
-                <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
-                    <button id="cancel-folder-browser"
-                            class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors">
-                        Cancel
-                    </button>
-                </div>
+        <!-- Breadcrumb Navigation -->
+        <div class="px-6 py-2 bg-gray-50 border-b border-gray-200">
+            <div id="folder-breadcrumb" class="flex items-center space-x-1 text-sm overflow-x-auto">
+                <!-- Breadcrumbs will be inserted here -->
             </div>
+        </div>
+
+        <!-- Current Path Info -->
+        <div class="px-6 py-2 bg-blue-50 border-b border-gray-200 flex items-center justify-between">
+            <span class="text-sm text-blue-800" title="Does not include files in subfolders">
+                <span id="folder-mcap-count">0</span> MCAP files in this folder (not subfolders)
+            </span>
+            <button id="select-current-folder"
+                    class="px-4 py-1 bg-nrel-green text-white text-sm rounded-md hover:bg-nrel-green-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                Select This Folder
+            </button>
+        </div>
+
+        <!-- Folder List -->
+        <div id="folder-list" class="max-h-96 overflow-y-auto divide-y divide-gray-200">
+            <!-- Folders will be inserted here -->
+        </div>
+
+        <!-- Loading State -->
+        <div id="folder-loading" class="hidden p-8 text-center">
+            <svg class="spinner h-8 w-8 mx-auto text-nrel-blue" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-gray-500">Loading...</p>
+        </div>
+
+        <!-- Error State -->
+        <div id="folder-error" class="hidden p-8 text-center">
+            <p class="text-red-600" id="folder-error-message">Error loading folder</p>
         </div>
     </div>
 
