@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=0.1
+Type=Application
+Name=MODAQ Upload
+Comment=MODAQ File Uploader
+Exec=python3 {{PROJECT_DIR}}/launch.py
+Icon={{PROJECT_DIR}}/app/static/images/nrel-logo@2x-01.png
+Terminal=true
+Categories=Science;Utility;
+StartupNotify=true
