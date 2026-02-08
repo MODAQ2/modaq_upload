@@ -6,7 +6,7 @@
  */
 import { apiGet, apiPost } from './api.js';
 import { debounce } from './debounce.js';
-import { setText, withLoadingButton } from './dom.js';
+import { hideEl, setText, toggleEl, withLoadingButton } from './dom.js';
 import { showNotification } from './notify.js';
 import state from './state.js';
 
@@ -213,11 +213,8 @@ export async function loadCsvFiles() {
     );
 
     // Update badge
-    const badge = document.getElementById('csv-count-badge');
-    if (badge) {
-      badge.textContent = String(csvFiles.length);
-      badge.classList.toggle('hidden', csvFiles.length === 0);
-    }
+    setText('csv-count-badge', csvFiles.length);
+    toggleEl('csv-count-badge', csvFiles.length > 0);
 
     const tbody = document.getElementById('csv-table-body');
     if (!tbody) return;
@@ -281,12 +278,11 @@ function downloadCsv(path) {
 async function previewCsv(path) {
   const panel = document.getElementById('csv-preview-panel');
   const content = document.getElementById('csv-preview-content');
-  const title = document.getElementById('csv-preview-title');
   if (!panel || !content) return;
 
   // Toggle off if clicking the same file
   if (currentPreviewPath === path && !panel.classList.contains('hidden')) {
-    panel.classList.add('hidden');
+    hideEl('csv-preview-panel');
     currentPreviewPath = '';
     return;
   }
@@ -296,7 +292,7 @@ async function previewCsv(path) {
   panel.classList.remove('hidden');
 
   const filename = path.split('/').pop() || path;
-  if (title) title.textContent = `Preview: ${filename}`;
+  setText('csv-preview-title', `Preview: ${filename}`);
 
   try {
     const data = await apiGet(`/api/logs/csv-preview?path=${encodeURIComponent(path)}`);
@@ -386,14 +382,10 @@ export function initLogs() {
   }
 
   // CSV preview close button
-  const csvPreviewClose = document.getElementById('csv-preview-close');
-  const csvPreviewPanel = document.getElementById('csv-preview-panel');
-  if (csvPreviewClose && csvPreviewPanel) {
-    csvPreviewClose.addEventListener('click', () => {
-      csvPreviewPanel.classList.add('hidden');
-      currentPreviewPath = '';
-    });
-  }
+  document.getElementById('csv-preview-close')?.addEventListener('click', () => {
+    hideEl('csv-preview-panel');
+    currentPreviewPath = '';
+  });
 
   // Filter controls
   const { date: dateEl, level: levelEl, category: catEl, search: searchEl } = getFilterEls();
