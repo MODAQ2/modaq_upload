@@ -21,3 +21,9 @@ def files() -> str:
 def settings() -> str:
     """Render the settings page."""
     return render_template("settings.html")
+
+
+@main_bp.route("/logs")
+def logs() -> str:
+    """Render the logs viewer page."""
+    return render_template("logs.html")
