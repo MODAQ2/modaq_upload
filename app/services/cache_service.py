@@ -10,31 +10,16 @@ from mypy_boto3_s3 import S3Client
 
 
 class CacheService:
-    """Singleton cache service with thread-safe SQLite access for S3 file tracking."""
+    """Cache service with thread-safe SQLite access for S3 file tracking."""
 
     CACHE_FILE = "modaq_upload_cache.db"
     CACHE_TTL_SECONDS = 3600  # 1 hour default TTL
 
-    _instance: "CacheService | None" = None
-    _lock = threading.Lock()
-
-    def __new__(cls) -> "CacheService":
-        """Ensure singleton instance."""
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                cls._instance._initialized = False
-            return cls._instance
-
     def __init__(self) -> None:
         """Initialize the cache database."""
-        if getattr(self, "_initialized", False):
-            return
-
         self._db_path = Path(self.CACHE_FILE)
         self._local = threading.local()
         self._init_db()
-        self._initialized = True
 
     def _get_connection(self) -> sqlite3.Connection:
         """Get thread-local database connection."""
@@ -73,6 +58,10 @@ class CacheService:
 
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_bucket ON s3_files(bucket)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_bucket_filename ON s3_files(bucket, filename, file_size)
         """)
 
         # Metadata table for tracking sync status per bucket
@@ -131,6 +120,42 @@ class CacheService:
             return None  # Expired
 
         return bool(row["file_exists"])
+
+    def check_exists_by_filename(
+        self,
+        bucket: str,
+        filename: str,
+        file_size: int,
+    ) -> bool | None:
+        """Check if a file exists in the cache by filename and size.
+
+        Fallback lookup when the S3 path isn't known (e.g. pre-filter can't
+        generate the same path as the actual MCAP analysis). No TTL is applied
+        because if we uploaded a file, that fact doesn't expire.
+
+        Args:
+            bucket: S3 bucket name
+            filename: Original filename
+            file_size: File size in bytes
+
+        Returns:
+            True if any cache entry for this filename+size says it exists,
+            None if no matching entry found
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT 1 FROM s3_files
+            WHERE bucket = ? AND filename = ? AND file_size = ? AND file_exists = 1
+            LIMIT 1
+            """,
+            (bucket, filename, file_size),
+        )
+
+        row = cursor.fetchone()
+        return True if row else None
 
     def update_cache(
         self,
