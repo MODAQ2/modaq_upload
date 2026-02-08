@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -20,7 +20,7 @@ from app.services.utils import format_file_size
 logger = logging.getLogger(__name__)
 
 # Timestamps before this date are considered invalid (1970/epoch issues)
-EPOCH_CUTOFF = datetime(1980, 1, 1)
+EPOCH_CUTOFF = datetime(1980, 1, 1, tzinfo=UTC)
 
 
 class UploadStatus(Enum):
@@ -100,7 +100,7 @@ class UploadJob:
     job_id: str
     files: list[FileUploadState] = field(default_factory=list)
     status: UploadStatus = UploadStatus.PENDING
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     completed_at: datetime | None = None
     cancelled: bool = False
@@ -144,7 +144,7 @@ class UploadJob:
         if not self.started_at or self.uploaded_bytes == 0:
             return None
 
-        elapsed = (datetime.now() - self.started_at).total_seconds()
+        elapsed = (datetime.now(UTC) - self.started_at).total_seconds()
         if elapsed <= 0:
             return None
 
@@ -382,8 +382,8 @@ class UploadManager:
             file_state.start_time = start_time
 
             # Check if timestamp is valid (after 1980)
-            check_time = start_time.replace(tzinfo=None) if start_time.tzinfo else start_time
-            file_state.is_valid = check_time >= EPOCH_CUTOFF
+            naive_start = mcap_service.to_naive_utc(start_time)
+            file_state.is_valid = naive_start >= EPOCH_CUTOFF.replace(tzinfo=None)
 
             # Generate S3 path
             s3_path = mcap_service.generate_s3_path(start_time, file_state.filename)
@@ -575,7 +575,7 @@ class UploadManager:
             return
 
         job.status = UploadStatus.UPLOADING
-        job.started_at = datetime.now()
+        job.started_at = datetime.now(UTC)
 
         # Create S3 client
         try:
@@ -681,7 +681,7 @@ class UploadManager:
                 file_state = futures[future]
                 try:
                     result = future.result()
-                    file_state.upload_completed_at = datetime.now()
+                    file_state.upload_completed_at = datetime.now(UTC)
                     if result["success"]:
                         file_state.status = UploadStatus.COMPLETED
                         file_state.bytes_uploaded = file_state.file_size
@@ -737,7 +737,7 @@ class UploadManager:
                     progress_callback(job)
 
         # Update final job status
-        job.completed_at = datetime.now()
+        job.completed_at = datetime.now(UTC)
         if job.cancelled:
             job.status = UploadStatus.CANCELLED
         elif all(f.status in (UploadStatus.COMPLETED, UploadStatus.SKIPPED) for f in job.files):
@@ -1022,7 +1022,7 @@ class UploadManager:
         Returns:
             Number of jobs removed
         """
-        now = datetime.now()
+        now = datetime.now(UTC)
         removed = 0
 
         with self._lock:
