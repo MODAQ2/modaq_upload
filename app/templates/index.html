@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros.html" import spinner, stat_card %}
 
 {% block title %}Upload Files - {{ super() }}{% endblock %}
 
@@ -40,21 +41,10 @@
                 <!-- Connector -->
                 <div class="step-connector flex-1 h-0.5 bg-gray-300 mx-3"></div>
 
-                <!-- Step 3: Validate -->
+                <!-- Step 3: Upload -->
                 <div class="flex items-center" data-step="3">
                     <div class="step-circle flex items-center justify-center w-8 h-8 rounded-full border-2 border-gray-300 bg-white text-gray-500 font-semibold text-sm">
                         3
-                    </div>
-                    <span class="step-label ml-2 text-sm font-medium text-gray-500">Validate</span>
-                </div>
-
-                <!-- Connector -->
-                <div class="step-connector flex-1 h-0.5 bg-gray-300 mx-3"></div>
-
-                <!-- Step 4: Upload -->
-                <div class="flex items-center" data-step="4">
-                    <div class="step-circle flex items-center justify-center w-8 h-8 rounded-full border-2 border-gray-300 bg-white text-gray-500 font-semibold text-sm">
-                        4
                     </div>
                     <span class="step-label ml-2 text-sm font-medium text-gray-500">Upload</span>
                 </div>
@@ -62,8 +52,8 @@
                 <!-- Connector -->
                 <div class="step-connector flex-1 h-0.5 bg-gray-300 mx-3"></div>
 
-                <!-- Step 5: Complete -->
-                <div class="flex items-center" data-step="5">
+                <!-- Step 4: Complete -->
+                <div class="flex items-center" data-step="4">
                     <div class="step-circle flex items-center justify-center w-8 h-8 rounded-full border-2 border-gray-300 bg-white text-gray-500 font-semibold text-sm">
                         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
@@ -99,29 +89,60 @@
             <span class="text-sm text-blue-800" title="Does not include files in subfolders">
                 <span id="folder-mcap-count">0</span> MCAP files in this folder (not subfolders)
             </span>
-            <button id="select-current-folder"
-                    class="px-4 py-1 bg-nrel-green text-white text-sm rounded-md hover:bg-nrel-green-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                Select This Folder
-            </button>
         </div>
 
-        <!-- Folder List -->
-        <div id="folder-list" class="max-h-96 overflow-y-auto divide-y divide-gray-200">
+        <!-- Folder List (subfolders) -->
+        <div id="folder-list" class="divide-y divide-gray-200">
             <!-- Folders will be inserted here -->
+        </div>
+
+        <!-- File Table (MCAP files with sortable columns) -->
+        <div id="file-table-section" class="hidden">
+            <table class="w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50" id="file-table-head">
+                    <tr>
+                        <th class="px-6 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                            data-file-sort="name">
+                            Filename <span class="file-sort-indicator"></span>
+                        </th>
+                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 w-40"
+                            data-file-sort="mtime">
+                            Date Modified <span class="file-sort-indicator"></span>
+                        </th>
+                        <th class="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 w-24"
+                            data-file-sort="size">
+                            Size <span class="file-sort-indicator"></span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody id="file-table-body" class="bg-white divide-y divide-gray-200">
+                    <!-- File rows will be inserted here -->
+                </tbody>
+            </table>
         </div>
 
         <!-- Loading State -->
         <div id="folder-loading" class="hidden p-8 text-center">
-            <svg class="spinner h-8 w-8 mx-auto text-nrel-blue" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p class="mt-2 text-gray-500">Loading...</p>
+            {{ spinner() }}
         </div>
 
         <!-- Error State -->
         <div id="folder-error" class="hidden p-8 text-center">
             <p class="text-red-600" id="folder-error-message">Error loading folder</p>
+        </div>
+
+        <!-- Primary Upload Folder Action (sticky so it's visible with large file lists) -->
+        <div class="px-6 py-4 border-t border-gray-200 bg-white sticky bottom-0 flex items-center justify-between">
+            <span id="folder-select-summary" class="text-sm text-gray-600">
+                Navigate to the folder containing your MCAP files, then click Upload Folder.
+            </span>
+            <button id="select-folder-btn"
+                    class="px-8 py-3 bg-nlr-blue text-white text-base font-semibold rounded-lg shadow-md hover:bg-nlr-blue-light transition-colors disabled:bg-gray-300 disabled:text-gray-500 disabled:shadow-none disabled:cursor-not-allowed flex items-center">
+                <span>Upload This Folder</span>
+                <svg class="w-5 h-5 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </svg>
+            </button>
         </div>
     </div>
 
@@ -135,18 +156,9 @@
 
             <div class="p-6 border-b border-gray-200">
                 <div class="grid grid-cols-3 gap-4 text-center mb-6">
-                    <div class="bg-gray-50 rounded-lg p-4">
-                        <div id="scan-total" class="text-2xl font-bold text-gray-700">0</div>
-                        <div class="text-sm text-gray-500">Total MCAP Files</div>
-                    </div>
-                    <div class="bg-green-50 rounded-lg p-4">
-                        <div id="scan-to-upload" class="text-2xl font-bold text-green-600">0</div>
-                        <div class="text-sm text-green-700">To Validate</div>
-                    </div>
-                    <div class="bg-yellow-50 rounded-lg p-4">
-                        <div id="scan-already-uploaded" class="text-2xl font-bold text-yellow-600">0</div>
-                        <div class="text-sm text-yellow-700">Already Uploaded</div>
-                    </div>
+                    {{ stat_card("scan-total", "Total MCAP Files", "gray") }}
+                    {{ stat_card("scan-total-volume", "Total Volume", "blue", "0 B") }}
+                    {{ stat_card("scan-already-uploaded", "Already Uploaded", "yellow") }}
                 </div>
 
                 <div class="flex justify-center space-x-4">
@@ -157,106 +169,47 @@
                         </svg>
                         <span>Back</span>
                     </button>
-                    <button id="start-upload-btn"
-                            class="px-6 py-2 bg-nrel-blue text-white rounded-md hover:bg-nrel-blue-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center">
-                        <span>Validate Files</span>
+                    <button id="continue-upload-btn"
+                            class="px-6 py-2 bg-nlr-blue text-white rounded-md hover:bg-nlr-blue-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center">
+                        <span>Continue</span>
                         <svg class="w-4 h-4 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                    </button>
-                </div>
-                <p class="text-xs text-gray-500 mt-3 text-center">
-                    Validation extracts timestamps and checks for duplicates. You'll review results before uploading.
-                </p>
-            </div>
-
-            <!-- File List -->
-            <div class="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-                <span class="text-sm font-medium text-gray-700">Files</span>
-                <label class="flex items-center">
-                    <input type="checkbox" id="scan-hide-uploaded"
-                           class="rounded border-gray-300 text-nrel-blue focus:ring-nrel-blue">
-                    <span class="ml-2 text-sm text-gray-600">Hide already uploaded</span>
-                </label>
-            </div>
-            <div id="scan-file-list" class="max-h-96 overflow-y-auto divide-y divide-gray-200">
-                <!-- Files will be inserted here -->
-            </div>
-        </div>
-    </div>
-
-    <!-- Analysis Results (Step 3: Validate) -->
-    <div id="analysis-section" class="hidden">
-        <div class="bg-white rounded-lg shadow overflow-hidden">
-            <!-- Analysis Progress Bar -->
-            <div id="analysis-progress" class="px-6 py-3 bg-blue-50 border-b border-gray-200">
-                <div class="flex items-center justify-between mb-1">
-                    <span class="text-sm font-medium text-blue-800">
-                        Validating files: <span id="analysis-completed">0</span> / <span id="analysis-total">0</span>
-                    </span>
-                    <span class="text-sm text-blue-600" id="analysis-percent">0%</span>
-                </div>
-                <div class="w-full bg-blue-200 rounded-full h-2">
-                    <div id="analysis-progress-bar" class="bg-nrel-blue h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
-                </div>
-            </div>
-
-            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-gray-900">File Validation</h2>
-                <div class="flex items-center space-x-4">
-                    <label class="flex items-center">
-                        <input type="checkbox" id="hide-uploaded"
-                               class="rounded border-gray-300 text-nrel-blue focus:ring-nrel-blue">
-                        <span class="ml-2 text-sm text-gray-600">Hide already uploaded</span>
-                    </label>
-                    <label class="flex items-center">
-                        <input type="checkbox" id="skip-duplicates" checked
-                               class="rounded border-gray-300 text-nrel-blue focus:ring-nrel-blue">
-                        <span class="ml-2 text-sm text-gray-600">Skip duplicates</span>
-                    </label>
-                    <button id="cancel-analyze-btn"
-                            class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors flex items-center">
-                        <svg class="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17l-5-5m0 0l5-5m-5 5h12" />
-                        </svg>
-                        Back
-                    </button>
-                    <button id="upload-btn"
-                            class="px-4 py-2 bg-nrel-green text-white rounded-md hover:bg-nrel-green-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center">
-                        Upload Files
-                        <svg class="w-4 h-4 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                         </svg>
                     </button>
                 </div>
             </div>
 
-            <!-- Analysis Summary -->
-            <div id="analysis-summary" class="px-6 py-3 bg-gray-50 border-b border-gray-200">
-                <div class="flex items-center justify-between text-sm">
-                    <span class="text-gray-600">
-                        <span id="total-files">0</span> files selected
-                        (<span id="total-size">0 B</span>)
-                    </span>
-                    <span class="text-nrel-yellow">
-                        <span id="duplicate-count">0</span> duplicates found
-                    </span>
-                </div>
+            <!-- Sortable File Table -->
+            <div class="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+                <span class="text-sm font-medium text-gray-700">Files</span>
+                <label class="flex items-center">
+                    <input type="checkbox" id="scan-hide-uploaded"
+                           class="rounded border-gray-300 text-nlr-blue focus:ring-nlr-blue">
+                    <span class="ml-2 text-sm text-gray-600">Hide already uploaded</span>
+                </label>
             </div>
-
-            <!-- File Table -->
             <div class="overflow-x-auto">
                 <table class="w-full divide-y divide-gray-200 table-fixed">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="w-1/4 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File</th>
-                            <th class="w-20 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
-                            <th class="w-32 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Start Time</th>
-                            <th class="w-1/3 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">S3 Path</th>
-                            <th class="w-24 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="w-1/4 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="filename">
+                                Filename <span class="sort-indicator"></span>
+                            </th>
+                            <th class="w-1/4 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="path">
+                                Path <span class="sort-indicator"></span>
+                            </th>
+                            <th class="w-1/6 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="mtime">
+                                Date Modified <span class="sort-indicator"></span>
+                            </th>
+                            <th class="w-20 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="size">
+                                Size <span class="sort-indicator"></span>
+                            </th>
+                            <th class="w-24 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="status">
+                                Status <span class="sort-indicator"></span>
+                            </th>
                         </tr>
                     </thead>
-                    <tbody id="file-table-body" class="bg-white divide-y divide-gray-200">
+                    <tbody id="scan-file-list" class="bg-white divide-y divide-gray-200">
                         <!-- File rows will be inserted here -->
                     </tbody>
                 </table>
@@ -264,8 +217,8 @@
         </div>
     </div>
 
-    <!-- Upload Progress (Step 4: Upload) -->
-    <div id="progress-section" class="hidden">
+    <!-- Combined Upload (Step 3: Validate + Upload) -->
+    <div id="upload-section" class="hidden">
         <div class="bg-white rounded-lg shadow overflow-hidden">
             <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
                 <h2 class="text-lg font-semibold text-gray-900">Upload Progress</h2>
@@ -273,6 +226,11 @@
                         class="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors">
                     Cancel Upload
                 </button>
+            </div>
+
+            <!-- Phase Label -->
+            <div id="upload-phase" class="px-6 py-2 bg-blue-50 border-b border-gray-200">
+                <span class="text-sm font-medium text-blue-800" id="upload-phase-label">Validating files...</span>
             </div>
 
             <!-- Overall Progress -->
@@ -287,42 +245,33 @@
                     </span>
                 </div>
                 <div class="w-full bg-gray-200 rounded-full h-4">
-                    <div id="progress-bar" class="progress-bar bg-nrel-blue h-4 rounded-full" style="width: 0%"></div>
+                    <div id="progress-bar" class="progress-bar bg-nlr-blue h-4 rounded-full" style="width: 0%"></div>
                 </div>
                 <div class="mt-2 text-sm text-gray-500">
                     ETA: <span id="eta">Calculating...</span>
                 </div>
             </div>
 
-            <!-- File Progress List -->
-            <div id="progress-list" class="divide-y divide-gray-200 max-h-96 overflow-y-auto">
+            <!-- File Status List -->
+            <div id="upload-file-list" class="divide-y divide-gray-200 max-h-96 overflow-y-auto">
                 <!-- File progress items will be inserted here -->
             </div>
         </div>
     </div>
 
-    <!-- Completion Summary (Step 5: Complete) -->
+    <!-- Completion Summary (Step 4: Complete) -->
     <div id="completion-section" class="hidden">
         <div class="bg-white rounded-lg shadow overflow-hidden">
             <div class="px-6 py-4 border-b border-gray-200">
-                <h2 class="text-lg font-semibold text-gray-900">Upload Complete</h2>
+                <h2 class="text-lg font-semibold text-gray-900">Upload Summary</h2>
             </div>
 
             <div class="p-6">
                 <!-- File Status Summary -->
                 <div id="completion-summary" class="grid grid-cols-3 gap-6 text-center mb-6">
-                    <div class="bg-green-50 rounded-lg p-4">
-                        <div id="completed-count" class="text-3xl font-bold text-green-600">0</div>
-                        <div class="text-sm text-green-700">Uploaded</div>
-                    </div>
-                    <div class="bg-yellow-50 rounded-lg p-4">
-                        <div id="skipped-count" class="text-3xl font-bold text-yellow-600">0</div>
-                        <div class="text-sm text-yellow-700">Skipped</div>
-                    </div>
-                    <div class="bg-red-50 rounded-lg p-4">
-                        <div id="failed-count" class="text-3xl font-bold text-red-600">0</div>
-                        <div class="text-sm text-red-700">Failed</div>
-                    </div>
+                    {{ stat_card("completed-count", "Uploaded", "green", size="3xl") }}
+                    {{ stat_card("skipped-count", "Skipped", "yellow", size="3xl") }}
+                    {{ stat_card("failed-count", "Failed", "red", size="3xl") }}
                 </div>
 
                 <!-- Aggregate Stats -->
@@ -350,8 +299,15 @@
                 <!-- Action Buttons -->
                 <div class="flex justify-center space-x-4 mb-6">
                     <button id="upload-more-btn"
-                            class="px-6 py-2 bg-nrel-blue text-white rounded-md hover:bg-nrel-blue-light transition-colors">
+                            class="px-6 py-2 bg-nlr-blue text-white rounded-md hover:bg-nlr-blue-light transition-colors">
                         Upload More Files
+                    </button>
+                    <button id="download-csv-btn"
+                            class="px-6 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Download CSV
                     </button>
                     <a href="{{ url_for('main.files') }}"
                        class="px-6 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors">
@@ -370,6 +326,7 @@
                         <thead class="bg-gray-50">
                             <tr>
                                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">File</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">S3 Path</th>
                                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
                                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
                                 <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Speed</th>
@@ -385,5 +342,34 @@
         </div>
     </div>
 </div>
-{% endblock %}
 
+<!-- Confirm Upload Modal -->
+<div id="confirm-upload-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="fixed inset-0 bg-black bg-opacity-50" data-action="close-confirm-modal"></div>
+    <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+        <h3 class="text-lg font-semibold text-gray-900 mb-4">Upload to MODAQ Cloud?</h3>
+        <p class="text-sm text-gray-600 mb-2">
+            <span id="confirm-file-count" class="font-medium">0</span> files
+            (<span id="confirm-total-size" class="font-medium">0 B</span>) will be uploaded.
+        </p>
+        <label class="flex items-center mb-2">
+            <input type="checkbox" id="force-reupload-checkbox"
+                   class="rounded border-gray-300 text-nlr-blue focus:ring-nlr-blue">
+            <span class="ml-2 text-sm text-gray-700">Force reupload already uploaded files</span>
+        </label>
+        <p id="confirm-skip-note" class="text-xs text-gray-500 mb-6">
+            Duplicate files will be automatically skipped.
+        </p>
+        <div class="flex justify-end space-x-3">
+            <button class="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
+                    data-action="close-confirm-modal">
+                Cancel
+            </button>
+            <button id="confirm-upload-btn"
+                    class="px-4 py-2 bg-nlr-green text-white rounded-md hover:bg-nlr-green-light transition-colors">
+                Confirm Upload
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
