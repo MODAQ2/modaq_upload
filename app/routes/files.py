@@ -2,12 +2,22 @@
 
 from pathlib import Path
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request
 
 from app.config import get_settings
 from app.services import s3_service
 
 files_bp = Blueprint("files", __name__)
+
+
+@files_bp.before_request
+def _require_bucket() -> tuple[Response, int] | None:
+    """Ensure S3 bucket is configured before handling any request."""
+    settings = get_settings()
+    if not settings.s3_bucket:
+        return jsonify({"error": "S3 bucket not configured"}), 400
+    g.settings = settings
+    return None
 
 
 @files_bp.route("/list", methods=["GET"])
@@ -21,23 +31,18 @@ def list_files() -> tuple[Response, int]:
     Returns:
         JSON response with folders and files
     """
-    settings = get_settings()
-
-    if not settings.s3_bucket:
-        return jsonify({"error": "S3 bucket not configured"}), 400
-
     prefix = request.args.get("prefix", "")
     delimiter = request.args.get("delimiter", "/")
 
     try:
         client = s3_service.create_s3_client(
-            settings.aws_profile,
-            settings.aws_region,
+            g.settings.aws_profile,
+            g.settings.aws_region,
         )
 
         result = s3_service.list_bucket_objects(
             client,
-            settings.s3_bucket,
+            g.settings.s3_bucket,
             prefix=prefix,
             delimiter=delimiter,
         )
@@ -71,24 +76,19 @@ def get_file_info() -> tuple[Response, int]:
     Returns:
         JSON response with object metadata
     """
-    settings = get_settings()
-
-    if not settings.s3_bucket:
-        return jsonify({"error": "S3 bucket not configured"}), 400
-
     key = request.args.get("key", "")
     if not key:
         return jsonify({"error": "Object key required"}), 400
 
     try:
         client = s3_service.create_s3_client(
-            settings.aws_profile,
-            settings.aws_region,
+            g.settings.aws_profile,
+            g.settings.aws_region,
         )
 
         result = s3_service.get_object_metadata(
             client,
-            settings.s3_bucket,
+            g.settings.s3_bucket,
             key,
         )
 
@@ -112,11 +112,6 @@ def search_files() -> tuple[Response, int]:
     Returns:
         JSON response with matching files
     """
-    settings = get_settings()
-
-    if not settings.s3_bucket:
-        return jsonify({"error": "S3 bucket not configured"}), 400
-
     query = request.args.get("query", "").lower()
     prefix = request.args.get("prefix", "")
 
@@ -125,14 +120,14 @@ def search_files() -> tuple[Response, int]:
 
     try:
         client = s3_service.create_s3_client(
-            settings.aws_profile,
-            settings.aws_region,
+            g.settings.aws_profile,
+            g.settings.aws_region,
         )
 
         # List all objects with prefix (no delimiter to get all files)
         result = s3_service.list_bucket_objects(
             client,
-            settings.s3_bucket,
+            g.settings.s3_bucket,
             prefix=prefix,
             delimiter="",  # No delimiter to get all nested files
             max_keys=10000,
@@ -196,7 +191,7 @@ def browse_local() -> tuple[Response, int]:
 
     # Build response
     folders: list[dict[str, str | int]] = []
-    files: list[dict[str, str | int]] = []
+    files: list[dict[str, str | int | float]] = []
     mcap_count = 0
 
     try:
@@ -223,11 +218,13 @@ def browse_local() -> tuple[Response, int]:
                 elif entry.is_file():
                     if entry.suffix == ".mcap":
                         mcap_count += 1
+                        file_stat = entry.stat()
                         files.append(
                             {
                                 "name": entry.name,
                                 "path": str(entry),
-                                "size": entry.stat().st_size,
+                                "size": file_stat.st_size,
+                                "mtime": file_stat.st_mtime,
                             }
                         )
             except PermissionError:
