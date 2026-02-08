@@ -1,19 +1,18 @@
+import { resetAnalysisState } from './analysis.js';
 /**
  * Cancel and reset operations for uploads.
  */
+import { apiPost } from './api.js';
+import { hideEl, showEl } from './dom.js';
+import { showNotification } from './notify.js';
 import state from './state.js';
 import { hideUploadSteps } from './stepper.js';
-import { showNotification } from './utils.js';
-
-export function cancelAnalysis() {
-  resetUpload();
-}
 
 export async function cancelUpload() {
   if (!state.currentJobId) return;
 
   try {
-    await fetch(`/api/upload/cancel/${state.currentJobId}`, { method: 'POST' });
+    await apiPost(`/api/upload/cancel/${state.currentJobId}`);
     if (state.eventSource) state.eventSource.close();
     showNotification('Upload cancelled', 'info');
   } catch (_error) {
@@ -28,14 +27,18 @@ export function resetUpload() {
     state.eventSource = null;
   }
 
+  resetAnalysisState();
   hideUploadSteps();
 
-  document.getElementById('folder-browser-panel')?.classList.remove('hidden');
-  document.getElementById('analysis-section')?.classList.add('hidden');
-  document.getElementById('progress-section')?.classList.add('hidden');
-  document.getElementById('completion-section')?.classList.add('hidden');
-  document.getElementById('scan-results-section')?.classList.add('hidden');
+  showEl('folder-browser-panel');
+  hideEl('upload-section');
+  hideEl('completion-section');
+  hideEl('scan-results-section');
+  hideEl('confirm-upload-modal');
 
   state.selectedFolderPath = null;
   state.scanFilePaths = [];
+  state.scanFileStatuses = [];
+  state.scanTotalSize = 0;
+  state.scanFolderPath = null;
 }

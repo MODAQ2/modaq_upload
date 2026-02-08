@@ -1,12 +1,13 @@
-import { applyUploadedFilter, checkForActiveJob } from './analysis.js';
-import { initFolderBrowser, startDirectUpload } from './folder-browser.js';
+import { checkForActiveJob } from './analysis.js';
+import { hideEl, showEl } from './dom.js';
+import { initFolderBrowser, showConfirmModal, startCombinedUpload } from './folder-browser.js';
 /**
  * Upload page initialization and event wiring.
  */
 import state from './state.js';
 import { setUploadStep } from './stepper.js';
-import { cancelAnalysis, cancelUpload, resetUpload } from './upload-control.js';
-import { startUpload } from './upload-exec.js';
+import { cancelUpload, resetUpload } from './upload-control.js';
+import { downloadSummaryCSV } from './upload-exec.js';
 
 export function initUpload() {
   const panel = document.getElementById('folder-browser-panel');
@@ -17,17 +18,16 @@ export function initUpload() {
   setUploadStep(1);
   checkForActiveJob();
 
-  document.getElementById('upload-btn')?.addEventListener('click', startUpload);
-  document.getElementById('cancel-analyze-btn')?.addEventListener('click', cancelAnalysis);
   document.getElementById('cancel-upload-btn')?.addEventListener('click', cancelUpload);
   document.getElementById('upload-more-btn')?.addEventListener('click', resetUpload);
+  document.getElementById('download-csv-btn')?.addEventListener('click', downloadSummaryCSV);
 
-  document.getElementById('hide-uploaded')?.addEventListener('change', applyUploadedFilter);
+  document.getElementById('continue-upload-btn')?.addEventListener('click', showConfirmModal);
+  document.getElementById('confirm-upload-btn')?.addEventListener('click', startCombinedUpload);
 
-  document.getElementById('start-upload-btn')?.addEventListener('click', startDirectUpload);
   document.getElementById('cancel-scan-btn')?.addEventListener('click', () => {
-    document.getElementById('scan-results-section')?.classList.add('hidden');
-    document.getElementById('folder-browser-panel')?.classList.remove('hidden');
+    hideEl('scan-results-section');
+    showEl('folder-browser-panel');
     state.selectedFolderPath = null;
     setUploadStep(1);
   });
