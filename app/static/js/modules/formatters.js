@@ -1,5 +1,5 @@
 /**
- * Pure utility functions for formatting and notifications.
+ * Pure formatting functions for bytes, time, and dates.
  */
 
 /**
@@ -44,23 +44,17 @@ export function formatDuration(seconds) {
 }
 
 /**
- * @param {string} message
- * @param {'info' | 'error' | 'success'} [type]
+ * Format a Unix epoch (seconds) into a locale date string.
+ * @param {number | null | undefined} epochSeconds
+ * @returns {string}
  */
-export function showNotification(message, type = 'info') {
-  const notification = document.createElement('div');
-  notification.className = `fixed top-4 right-4 px-6 py-3 rounded-md shadow-lg z-50 transition-opacity duration-300 ${
-    type === 'error'
-      ? 'bg-red-500 text-white'
-      : type === 'success'
-        ? 'bg-green-500 text-white'
-        : 'bg-nrel-blue text-white'
-  }`;
-  notification.textContent = message;
-  document.body.appendChild(notification);
-
-  setTimeout(() => {
-    notification.classList.add('opacity-0');
-    setTimeout(() => notification.remove(), 300);
-  }, 5000);
+export function formatMtime(epochSeconds) {
+  if (!epochSeconds) return '-';
+  return new Date(epochSeconds * 1000).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
