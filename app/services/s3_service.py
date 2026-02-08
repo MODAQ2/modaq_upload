@@ -255,6 +255,15 @@ def validate_bucket_access(client: S3Client, bucket: str) -> dict[str, Any]:
         }
 
 
+def get_s3_client_from_settings() -> tuple[S3Client, str]:
+    """Create S3 client from current app settings. Returns (client, bucket)."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    client = create_s3_client(settings.aws_profile, settings.aws_region)
+    return client, settings.s3_bucket
+
+
 def get_object_metadata(client: S3Client, bucket: str, key: str) -> dict[str, Any]:
     """Get metadata for an S3 object.
 
