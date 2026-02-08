@@ -1,5 +1,6 @@
 """Configuration management for modaq_upload"""
 
+import functools
 import json
 import os
 import subprocess
@@ -28,26 +29,28 @@ ENV_AWS_REGION = "MODAQ_AWS_REGION"
 ENV_S3_BUCKET = "MODAQ_S3_BUCKET"
 ENV_DEFAULT_UPLOAD_FOLDER = "MODAQ_DEFAULT_UPLOAD_FOLDER"
 ENV_DISPLAY_NAME = "MODAQ_DISPLAY_NAME"
+ENV_LOG_DIRECTORY = "MODAQ_LOG_DIRECTORY"
+
+
+@functools.cache
+def _read_pyproject_field(field: str, default: str) -> str:
+    """Read a field from pyproject.toml [project] section (cached)."""
+    try:
+        with open(PYPROJECT_FILE, "rb") as f:
+            pyproject = tomllib.load(f)
+        return str(pyproject.get("project", {}).get(field, default))
+    except Exception:
+        return default
 
 
 def get_package_version() -> str:
     """Get the package version from pyproject.toml."""
-    try:
-        with open(PYPROJECT_FILE, "rb") as f:
-            pyproject = tomllib.load(f)
-        return str(pyproject.get("project", {}).get("version", "0.0.0"))
-    except Exception:
-        return "0.0.0"
+    return _read_pyproject_field("version", "0.0.0")
 
 
 def get_package_name() -> str:
     """Get the package name from pyproject.toml."""
-    try:
-        with open(PYPROJECT_FILE, "rb") as f:
-            pyproject = tomllib.load(f)
-        return str(pyproject.get("project", {}).get("name", "modaq-uploader"))
-    except Exception:
-        return "modaq-uploader"
+    return _read_pyproject_field("name", "modaq-uploader")
 
 
 class Settings:
