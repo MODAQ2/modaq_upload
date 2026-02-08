@@ -34,6 +34,31 @@ export function hideEl(id) {
  * @param {string} loadingText
  * @param {() => Promise<void>} callback
  */
+/**
+ * Toggle the `hidden` class on an element by ID.
+ * @param {string} id
+ * @param {boolean} show - When true, remove `hidden`; when false, add it.
+ */
+export function toggleEl(id, show) {
+  document.getElementById(id)?.classList.toggle('hidden', !show);
+}
+
+/**
+ * Append text to an element's textContent by ID.
+ * @param {string} id
+ * @param {string} value
+ */
+export function appendText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent += String(value);
+}
+
+/**
+ * Disable a button, swap its label, run a callback, then restore.
+ * @param {HTMLButtonElement | null} btn
+ * @param {string} loadingText
+ * @param {() => Promise<void>} callback
+ */
 export async function withLoadingButton(btn, loadingText, callback) {
   if (!btn) return;
   const originalText = btn.textContent;
