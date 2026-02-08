@@ -1,10 +1,22 @@
 """MCAP service for parsing MCAP files and extracting metadata."""
 
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
+
+from app.services.utils import format_file_size
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["format_file_size"]
+
+
+def to_naive_utc(dt: datetime) -> datetime:
+    """Strip timezone for comparison (normalize to naive UTC)."""
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
 
 def _extract_timestamp_from_filename(filename: str) -> datetime | None:
@@ -92,12 +104,12 @@ def _find_datetime_in_dataframes(dataframes: dict[str, pd.DataFrame]) -> datetim
             # Check if it's a valid timestamp (after 1980)
             if topic_time is not None:
                 # Make timezone-naive for comparison
-                check_time = topic_time.replace(tzinfo=None) if topic_time.tzinfo else topic_time
-                if check_time > epoch_cutoff.replace(tzinfo=None):
-                    if earliest_time is None or check_time < earliest_time.replace(tzinfo=None):
+                check_time = to_naive_utc(topic_time)
+                if check_time > to_naive_utc(epoch_cutoff):
+                    if earliest_time is None or check_time < to_naive_utc(earliest_time):
                         earliest_time = topic_time
         except Exception:
-            pass
+            logger.debug("Failed to extract datetime from index of topic", exc_info=True)
 
         # Then, check columns for datetime types
         for col in df.columns:
@@ -116,13 +128,9 @@ def _find_datetime_in_dataframes(dataframes: dict[str, pd.DataFrame]) -> datetim
                         else:
                             topic_time = pd.Timestamp(first_val).to_pydatetime()
 
-                        check_time = (
-                            topic_time.replace(tzinfo=None) if topic_time.tzinfo else topic_time
-                        )
-                        if check_time > epoch_cutoff.replace(tzinfo=None):
-                            if earliest_time is None or check_time < earliest_time.replace(
-                                tzinfo=None
-                            ):
+                        check_time = to_naive_utc(topic_time)
+                        if check_time > to_naive_utc(epoch_cutoff):
+                            if earliest_time is None or check_time < to_naive_utc(earliest_time):
                                 earliest_time = topic_time
 
                 # Check for timestamp-like column names
@@ -139,22 +147,18 @@ def _find_datetime_in_dataframes(dataframes: dict[str, pd.DataFrame]) -> datetim
                                 elif first_val > 1e12:  # Milliseconds
                                     topic_time = pd.Timestamp(first_val, unit="ms").to_pydatetime()
                                 else:  # Seconds
-                                    topic_time = datetime.fromtimestamp(first_val)
+                                    topic_time = datetime.fromtimestamp(first_val, tz=UTC)
 
-                                check_time = (
-                                    topic_time.replace(tzinfo=None)
-                                    if topic_time.tzinfo
-                                    else topic_time
-                                )
-                                if check_time > epoch_cutoff.replace(tzinfo=None):
-                                    if earliest_time is None or check_time < earliest_time.replace(
-                                        tzinfo=None
+                                check_time = to_naive_utc(topic_time)
+                                if check_time > to_naive_utc(epoch_cutoff):
+                                    if earliest_time is None or check_time < to_naive_utc(
+                                        earliest_time
                                     ):
                                         earliest_time = topic_time
                         except Exception:
-                            pass
+                            logger.debug("Failed to parse timestamp column %s", col, exc_info=True)
             except Exception:
-                continue
+                logger.debug("Failed to inspect column %s", col, exc_info=True)
 
     return earliest_time
 
@@ -183,7 +187,7 @@ def extract_start_time(file_path: Path | str) -> datetime:
         raise FileNotFoundError(f"MCAP file not found: {path}")
 
     earliest_time: datetime | None = None
-    epoch_cutoff = datetime(1980, 1, 1)
+    epoch_cutoff = datetime(1980, 1, 1, tzinfo=UTC)
 
     try:
         parser = MCAPParser(path)
@@ -196,7 +200,7 @@ def extract_start_time(file_path: Path | str) -> datetime:
             )
             earliest_time = _find_datetime_in_dataframes(dataframes)
         except Exception:
-            pass
+            logger.debug("Stage2 datetime extraction failed", exc_info=True)
 
         # If no valid time found, try without conversion
         if earliest_time is None:
@@ -204,7 +208,7 @@ def extract_start_time(file_path: Path | str) -> datetime:
                 dataframes = parser.get_dataframes(process_stage2=False)
                 earliest_time = _find_datetime_in_dataframes(dataframes)
             except Exception:
-                pass
+                logger.debug("Raw dataframe extraction failed", exc_info=True)
 
     except ImportError as e:
         raise ImportError(
@@ -212,12 +216,11 @@ def extract_start_time(file_path: Path | str) -> datetime:
             "Install with: pip install git+https://github.com/MODAQ2/MODAQ_toolkit.git"
         ) from e
     except Exception:
-        pass  # Will fall back to filename parsing
+        logger.debug("MCAP parser initialization failed for %s", path, exc_info=True)
 
     # Validate the timestamp - must be after 1980
     if earliest_time is not None:
-        check_time = earliest_time.replace(tzinfo=None) if earliest_time.tzinfo else earliest_time
-        if check_time < epoch_cutoff:
+        if to_naive_utc(earliest_time) < to_naive_utc(epoch_cutoff):
             earliest_time = None  # Invalid timestamp, try filename
 
     # Fallback: try to extract from filename
@@ -247,6 +250,7 @@ def generate_s3_path(start_time: datetime, filename: str) -> str:
     minute_bucket = (start_time.minute // 10) * 10
 
     path = (
+        f"data/"
         f"year={start_time.year:04d}/"
         f"month={start_time.month:02d}/"
         f"day={start_time.day:02d}/"
@@ -288,18 +292,3 @@ def get_file_info(file_path: Path | str) -> dict[str, str | int | None]:
     return info
 
 
-def format_file_size(size_bytes: int) -> str:
-    """Format a file size in bytes to a human-readable string.
-
-    Args:
-        size_bytes: Size in bytes
-
-    Returns:
-        Human-readable size string (e.g., "1.5 GB")
-    """
-    size_float = float(size_bytes)
-    for unit in ["B", "KB", "MB", "GB", "TB"]:
-        if abs(size_float) < 1024.0:
-            return f"{size_float:.1f} {unit}"
-        size_float = size_float / 1024.0
-    return f"{size_float:.1f} PB"
