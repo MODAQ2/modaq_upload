@@ -120,6 +120,8 @@ def main() -> None:
             "--bind",
             f"127.0.0.1:{PORT}",
             "--workers",
+            "1",
+            "--threads",
             "4",
             "--timeout",
             "300",
