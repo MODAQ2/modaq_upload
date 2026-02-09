@@ -11,6 +11,7 @@ import {
   loadHeaderVersion,
   openAboutModal,
 } from './modules/about.js';
+import { hideEl } from './modules/dom.js';
 import { goToStep } from './modules/stepper.js';
 
 // Global initialization (runs on every page)
@@ -31,6 +32,8 @@ document.addEventListener('click', (e) => {
   } else if (action === 'go-to-step') {
     const step = Number(/** @type {HTMLElement} */ (target).dataset.step);
     if (step) goToStep(step);
+  } else if (action === 'close-confirm-modal') {
+    hideEl('confirm-upload-modal');
   }
 });
 
@@ -43,4 +46,6 @@ if (page === 'upload') {
   import('./modules/file-browser.js').then(({ initFileBrowser }) => initFileBrowser());
 } else if (page === 'settings') {
   import('./modules/settings.js').then(({ initSettings }) => initSettings());
+} else if (page === 'logs') {
+  import('./modules/logs.js').then(({ initLogs }) => initLogs());
 }

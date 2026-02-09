@@ -1,5 +1,6 @@
 """Configuration management for modaq_upload"""
 
+import functools
 import json
 import os
 import subprocess
@@ -28,26 +29,28 @@ ENV_AWS_REGION = "MODAQ_AWS_REGION"
 ENV_S3_BUCKET = "MODAQ_S3_BUCKET"
 ENV_DEFAULT_UPLOAD_FOLDER = "MODAQ_DEFAULT_UPLOAD_FOLDER"
 ENV_DISPLAY_NAME = "MODAQ_DISPLAY_NAME"
+ENV_LOG_DIRECTORY = "MODAQ_LOG_DIRECTORY"
+
+
+@functools.cache
+def _read_pyproject_field(field: str, default: str) -> str:
+    """Read a field from pyproject.toml [project] section (cached)."""
+    try:
+        with open(PYPROJECT_FILE, "rb") as f:
+            pyproject = tomllib.load(f)
+        return str(pyproject.get("project", {}).get(field, default))
+    except Exception:
+        return default
 
 
 def get_package_version() -> str:
     """Get the package version from pyproject.toml."""
-    try:
-        with open(PYPROJECT_FILE, "rb") as f:
-            pyproject = tomllib.load(f)
-        return str(pyproject.get("project", {}).get("version", "0.0.0"))
-    except Exception:
-        return "0.0.0"
+    return _read_pyproject_field("version", "0.0.0")
 
 
 def get_package_name() -> str:
     """Get the package name from pyproject.toml."""
-    try:
-        with open(PYPROJECT_FILE, "rb") as f:
-            pyproject = tomllib.load(f)
-        return str(pyproject.get("project", {}).get("name", "modaq-uploader"))
-    except Exception:
-        return "modaq-uploader"
+    return _read_pyproject_field("name", "modaq-uploader")
 
 
 class Settings:
@@ -79,6 +82,7 @@ class Settings:
             "s3_bucket": "",
             "default_upload_folder": "",
             "display_name": "MODAQ Uploader",
+            "log_directory": "logs",
         }
 
         # Load from settings.default.json if it exists
@@ -98,6 +102,7 @@ class Settings:
             "s3_bucket": os.environ.get(ENV_S3_BUCKET),
             "default_upload_folder": os.environ.get(ENV_DEFAULT_UPLOAD_FOLDER),
             "display_name": os.environ.get(ENV_DISPLAY_NAME),
+            "log_directory": os.environ.get(ENV_LOG_DIRECTORY),
         }
 
         # Only apply non-None environment values
@@ -141,27 +146,36 @@ class Settings:
     @property
     def aws_profile(self) -> str:
         """Get the AWS profile name."""
-        return str(self._settings.get("aws_profile", "default"))
+        return str(self._settings["aws_profile"])
 
     @property
     def aws_region(self) -> str:
         """Get the AWS region."""
-        return str(self._settings.get("aws_region", "us-west-2"))
+        return str(self._settings["aws_region"])
 
     @property
     def s3_bucket(self) -> str:
         """Get the S3 bucket name."""
-        return str(self._settings.get("s3_bucket", ""))
+        return str(self._settings["s3_bucket"])
 
     @property
     def default_upload_folder(self) -> str:
         """Get the default upload folder path."""
-        return str(self._settings.get("default_upload_folder", ""))
+        return str(self._settings["default_upload_folder"])
 
     @property
     def display_name(self) -> str:
         """Get the display name for the application."""
-        return str(self._settings.get("display_name", "MODAQ Uploader"))
+        return str(self._settings["display_name"])
+
+    @property
+    def log_directory(self) -> Path:
+        """Get the log directory path (resolved to absolute path relative to BASE_DIR)."""
+        log_dir = str(self._settings["log_directory"])
+        path = Path(log_dir)
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        return path
 
 
 def get_settings() -> Settings:
@@ -229,35 +243,11 @@ class AppUpdater:
             "modaq_toolkit": {"success": False, "output": ""},
         }
 
-        try:
-            # Git pull
-            git_result = subprocess.run(
-                ["git", "pull"],
-                cwd=self.base_dir,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            results["git_pull"] = {
-                "success": True,
-                "output": git_result.stdout + git_result.stderr,
-            }
-
-            # Pip install requirements
-            pip_result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
-                cwd=self.base_dir,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            results["pip_install"] = {
-                "success": True,
-                "output": pip_result.stdout + pip_result.stderr,
-            }
-
-            # Update modaq_toolkit specifically (force reinstall to get latest)
-            modaq_result = subprocess.run(
+        steps: list[tuple[str, list[str]]] = [
+            ("git_pull", ["git", "pull"]),
+            ("pip_install", [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]),
+            (
+                "modaq_toolkit",
                 [
                     sys.executable,
                     "-m",
@@ -267,34 +257,28 @@ class AppUpdater:
                     "--force-reinstall",
                     "git+https://github.com/MODAQ2/MODAQ_toolkit.git",
                 ],
-                cwd=self.base_dir,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            results["modaq_toolkit"] = {
-                "success": True,
-                "output": modaq_result.stdout + modaq_result.stderr,
-            }
+            ),
+        ]
 
-        except subprocess.CalledProcessError as e:
-            # Record which step failed
-            cmd_name = " ".join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
-            if "git" in cmd_name:
-                results["git_pull"] = {
+        for step_name, cmd in steps:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    cwd=self.base_dir,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                results[step_name] = {
+                    "success": True,
+                    "output": result.stdout + result.stderr,
+                }
+            except subprocess.CalledProcessError as e:
+                results[step_name] = {
                     "success": False,
                     "output": e.stdout + e.stderr if e.stdout else str(e),
                 }
-            elif "modaq" in cmd_name.lower() or "MODAQ" in cmd_name:
-                results["modaq_toolkit"] = {
-                    "success": False,
-                    "output": e.stdout + e.stderr if e.stdout else str(e),
-                }
-            else:
-                results["pip_install"] = {
-                    "success": False,
-                    "output": e.stdout + e.stderr if e.stdout else str(e),
-                }
+                break
 
         return results
 

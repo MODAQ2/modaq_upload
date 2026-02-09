@@ -1,10 +1,11 @@
 """Upload API routes for modaq_upload"""
 
 import json
-import os
 import tempfile
 import threading
-from collections.abc import Generator
+import time
+from collections import deque
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,7 @@ from app.services.upload_manager import (
 upload_bp = Blueprint("upload", __name__)
 
 # Store for SSE clients per job
-_sse_queues: dict[str, list[Any]] = {}
+_sse_queues: dict[str, list[deque[dict[str, Any]]]] = {}
 _sse_lock = threading.Lock()
 
 
@@ -31,6 +32,27 @@ def send_sse_event(job_id: str, data: dict[str, Any]) -> None:
         queues = _sse_queues.get(job_id, [])
         for q in queues:
             q.append(data)
+
+
+def _make_analysis_callback(
+    job_id: str,
+) -> Callable[[UploadJob, FileUploadState], None]:
+    """Create an analysis progress callback that sends SSE events."""
+
+    def callback(job: UploadJob, file_state: FileUploadState) -> None:
+        send_sse_event(
+            job_id,
+            {
+                "type": "analysis_progress",
+                "job_id": job.job_id,
+                "job_status": job.status.value,
+                "file": file_state.to_dict(),
+                "total_files": len(job.files),
+                "analysis_complete": job.status.value in ("ready", "failed"),
+            },
+        )
+
+    return callback
 
 
 @upload_bp.route("/analyze", methods=["POST"])
@@ -58,11 +80,10 @@ def analyze_files() -> tuple[Response, int]:
         for uploaded_file in uploaded_files:
             if uploaded_file.filename:
                 # Filename may include subdirectory path from folder selection
-                temp_path = os.path.join(temp_dir, uploaded_file.filename)
-                # Create parent directories if they don't exist
-                os.makedirs(os.path.dirname(temp_path), exist_ok=True)
+                temp_path = Path(temp_dir) / uploaded_file.filename
+                temp_path.parent.mkdir(parents=True, exist_ok=True)
                 uploaded_file.save(temp_path)
-                file_paths.append(temp_path)
+                file_paths.append(str(temp_path))
 
     # Handle JSON with file paths (for folder selection / bulk mode)
     elif request.is_json:
@@ -76,19 +97,7 @@ def analyze_files() -> tuple[Response, int]:
 
     # Create job with temp_dir tracked for cleanup
     job = manager.create_job(file_paths, temp_dir=temp_dir)
-
-    def analysis_progress_callback(job: UploadJob, file_state: FileUploadState) -> None:
-        """Send analysis progress updates via SSE."""
-        send_sse_event(
-            job.job_id,
-            {
-                "type": "analysis_progress",
-                "job_id": job.job_id,
-                "job_status": job.status.value,
-                "file": file_state.to_dict(),
-                "analysis_complete": job.status.value in ("ready", "failed"),
-            },
-        )
+    analysis_progress_callback = _make_analysis_callback(job.job_id)
 
     # Start analysis in background thread
     def run_analysis() -> None:
@@ -186,7 +195,7 @@ def get_progress(job_id: str) -> Response:
 
     def generate() -> Generator[str, None, None]:
         # Create a queue for this client
-        queue: list[Any] = []
+        queue: deque[dict[str, Any]] = deque()
         with _sse_lock:
             if job_id not in _sse_queues:
                 _sse_queues[job_id] = []
@@ -202,7 +211,7 @@ def get_progress(job_id: str) -> Response:
             while True:
                 # Check for updates
                 while queue:
-                    data = queue.pop(0)
+                    data = queue.popleft()
                     yield f"data: {json.dumps(data)}\n\n"
 
                     # Check if job is complete
@@ -210,8 +219,6 @@ def get_progress(job_id: str) -> Response:
                         return
 
                 # Small delay to prevent busy waiting
-                import time
-
                 time.sleep(0.1)
 
                 # Check if job still exists
@@ -268,19 +275,11 @@ def get_active_job() -> tuple[Response, int]:
     manager = get_upload_manager()
 
     # Find the most recent job that is still active (not completed/failed/cancelled)
-    active_statuses = {
-        UploadStatus.PENDING,
-        UploadStatus.ANALYZING,
-        UploadStatus.READY,
-        UploadStatus.UPLOADING,
-    }
-
+    active_jobs = manager.get_active_jobs()
     active_job: UploadJob | None = None
-    for job in manager.jobs.values():
-        if job.status in active_statuses:
-            # Return the most recently created active job
-            if active_job is None or job.job_id > active_job.job_id:
-                active_job = job
+    for job in active_jobs:
+        if active_job is None or job.job_id > active_job.job_id:
+            active_job = job
 
     if active_job:
         return jsonify(
@@ -345,14 +344,20 @@ def scan_folder() -> tuple[Response, int]:
 
     # Recursively find all .mcap files
     files: list[dict[str, Any]] = []
+    total_size = 0
     try:
         for mcap_path in folder_path.rglob("*.mcap"):
             if mcap_path.is_file():
+                stat = mcap_path.stat()
+                file_size = stat.st_size
+                total_size += file_size
                 files.append(
                     {
                         "path": str(mcap_path.absolute()),
                         "filename": mcap_path.name,
-                        "size": mcap_path.stat().st_size,
+                        "size": file_size,
+                        "mtime": stat.st_mtime,
+                        "relative_path": str(mcap_path.relative_to(folder_path)),
                     }
                 )
     except PermissionError as e:
@@ -364,6 +369,7 @@ def scan_folder() -> tuple[Response, int]:
             "folder_path": str(folder_path.absolute()),
             "files": files,
             "total_count": len(files),
+            "total_size": total_size,
         }
     ), 200
 
@@ -393,6 +399,7 @@ def bulk_analyze() -> tuple[Response, int]:
     file_paths: list[str] = data["file_paths"]
     auto_upload: bool = data.get("auto_upload", False)
     pre_filter_only: bool = data.get("pre_filter_only", False)
+    skip_duplicates: bool = data.get("skip_duplicates", True)
 
     if not file_paths:
         return jsonify({"error": "No files provided"}), 400
@@ -400,8 +407,10 @@ def bulk_analyze() -> tuple[Response, int]:
     settings = get_settings()
     manager = get_upload_manager()
 
-    # Run pre-filtering
-    files_to_analyze, pre_filter_stats = manager.pre_filter_files(file_paths, settings.s3_bucket)
+    # Run pre-filtering (with S3 fallback for cache misses)
+    files_to_analyze, pre_filter_stats = manager.pre_filter_files(
+        file_paths, settings.s3_bucket, settings.aws_profile, settings.aws_region
+    )
 
     if pre_filter_only:
         return jsonify(
@@ -412,22 +421,13 @@ def bulk_analyze() -> tuple[Response, int]:
             }
         ), 200
 
-    # Create job with files that need analysis (no temp_dir - direct file access)
-    job = manager.create_job(files_to_analyze, auto_upload=auto_upload)
-    job.pre_filter_stats = pre_filter_stats
+    # When force-reuploading, analyze ALL files (not just non-duplicates)
+    job_files = file_paths if not skip_duplicates else files_to_analyze
 
-    def analysis_progress_callback(job: UploadJob, file_state: FileUploadState) -> None:
-        """Send analysis progress updates via SSE."""
-        send_sse_event(
-            job.job_id,
-            {
-                "type": "analysis_progress",
-                "job_id": job.job_id,
-                "job_status": job.status.value,
-                "file": file_state.to_dict(),
-                "analysis_complete": job.status.value in ("ready", "failed"),
-            },
-        )
+    # Create job with files that need analysis (no temp_dir - direct file access)
+    job = manager.create_job(job_files, auto_upload=auto_upload)
+    job.pre_filter_stats = pre_filter_stats
+    analysis_progress_callback = _make_analysis_callback(job.job_id)
 
     def upload_progress_callback(job: UploadJob) -> None:
         """Send upload progress updates via SSE."""
@@ -455,8 +455,8 @@ def bulk_analyze() -> tuple[Response, int]:
                 },
             )
 
-            # Auto-upload if enabled and there are valid files
-            if final_job.auto_upload and final_job.has_valid_uploadable_files:
+            # Auto-upload if enabled and analysis succeeded
+            if final_job.auto_upload and final_job.status == UploadStatus.READY:
                 send_sse_event(
                     job.job_id,
                     {
@@ -469,9 +469,12 @@ def bulk_analyze() -> tuple[Response, int]:
                     settings.aws_profile,
                     settings.aws_region,
                     settings.s3_bucket,
-                    skip_duplicates=True,
+                    skip_duplicates=skip_duplicates,
                     progress_callback=upload_progress_callback,
                 )
+            elif final_job.auto_upload:
+                # All files failed analysis — send terminal status so frontend doesn't hang
+                send_sse_event(job.job_id, final_job.to_dict())
 
     thread = threading.Thread(target=run_bulk_analysis, daemon=True)
     thread.start()

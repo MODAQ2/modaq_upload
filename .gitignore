@@ -5,6 +5,9 @@ settings.json
 # SQLite cache
 modaq_upload_cache.db
 
+# Log files
+logs/
+
 # Python
 __pycache__/
 *.py[cod]

@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 authors = [
     { name = "Andrew Simms", email = "andrew.simms@nlr.gov" },
 ]
-keywords = ["modaq", "upload", "s3",  "warine-energy"]
+keywords = ["modaq", "upload", "s3",  "marine-energy"]
 
 [tool.ruff]
 line-length = 100
@@ -45,6 +45,7 @@ module = [
     "modaq_toolkit.*",
     "moto.*",
     "flask.*",
+    "pandas.*",
 ]
 ignore_missing_imports = true
 

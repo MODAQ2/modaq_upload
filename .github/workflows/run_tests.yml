@@ -1,0 +1,70 @@
+name: Run Tests
+
+on:
+  # Runs when commits are pushed directly to these branches
+  # Note: we are purposly skipping push in favor of branch protection rules
+  # that require PRs to be opened against these branches. This ensures that all
+  # changes are reviewed and pass tests before being merged. This avoids
+  # running tests on every push to feature branches, which can be noisy and
+  # inefficient. Instead, tests will only run when a PR is opened or updated
+  # that targets the main or develop branches.
+  # push:
+  #   branches: [main, develop]
+  # Runs when a PR is opened/updated that wants to merge INTO these branches
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: pre-commit/action@v3.0.1
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check app/ tests/
+
+      - name: Type check
+        run: mypy app/
+
+      - name: Test
+        run: pytest tests/ -v
+
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint, type check, and test
+        run: npm run check
