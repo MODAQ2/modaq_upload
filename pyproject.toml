@@ -45,6 +45,7 @@ module = [
     "modaq_toolkit.*",
     "moto.*",
     "flask.*",
+    "pandas.*",
 ]
 ignore_missing_imports = true
 
