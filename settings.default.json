@@ -2,5 +2,6 @@
     "aws_profile": "default",
     "aws_region": "us-west-2",
     "s3_bucket": "",
-    "default_upload_folder": ""
+    "default_upload_folder": "",
+    "log_directory": "logs"
 }

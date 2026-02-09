@@ -1,50 +1,81 @@
 /**
- * File analysis/validation (Step 3) and handleFiles entry point.
+ * File analysis/validation and combined upload progress (Step 3).
  */
+import { apiGet } from './api.js';
+import { hideEl, setText, showEl } from './dom.js';
+import { formatBytes } from './formatters.js';
+import { showNotification } from './notify.js';
 import state from './state.js';
-import { STEP_3_VALIDATED, setUploadStep, showUploadSteps } from './stepper.js';
-import { resetUpload } from './upload-control.js';
-import { connectProgressStream, showCompletionSummary, updateProgressUI } from './upload-exec.js';
-import { formatBytes, showNotification } from './utils.js';
+import { setUploadStep } from './stepper.js';
+import { showCompletionSummary, updateProgressUI } from './upload-exec.js';
+
+// Progress weighting: analysis is typically slower than upload
+const ANALYSIS_WEIGHT = 70;
+const UPLOAD_WEIGHT = 30;
+
+/**
+ * Cache of last-known status per filename to avoid redundant DOM rebuilds.
+ * @type {Map<string, string>}
+ */
+const fileRowStatusCache = new Map();
+
+/** Pending file updates to flush in the next animation frame. @type {Map<string, any>} */
+const pendingFileUpdates = new Map();
+
+/** Whether a requestAnimationFrame is already scheduled. */
+let rafScheduled = false;
+
+/** Pending overall progress data to flush. @type {any} */
+let pendingProgressData = null;
+
+/** Current phase of the upload flow: 'analysis' or 'upload'. */
+let currentPhase = 'analysis';
+
+/**
+ * Reset internal state (call when starting a new job or resetting).
+ */
+export function resetAnalysisState() {
+  fileRowStatusCache.clear();
+  pendingFileUpdates.clear();
+  pendingProgressData = null;
+  rafScheduled = false;
+  currentPhase = 'analysis';
+}
 
 /**
  * Check for an active upload job and restore UI state.
  */
 export async function checkForActiveJob() {
   try {
-    const response = await fetch('/api/upload/active');
-    if (!response.ok) return;
-
-    const data = await response.json();
+    const data = await apiGet('/api/upload/active');
     if (!data.job_id) return;
 
     state.currentJobId = data.job_id;
     const job = data.job;
 
-    if (job.status === 'analyzing') {
+    if (job.status === 'analyzing' || job.status === 'uploading') {
       setUploadStep(3);
-      document.getElementById('drop-zone')?.classList.add('hidden');
-      document.getElementById('analysis-section')?.classList.remove('hidden');
-      initializeAnalysisTableFromJob(job);
-      connectAnalysisProgressStream(state.currentJobId);
+      hideEl('folder-browser-panel');
+      showEl('upload-section');
+
+      if (job.status === 'uploading') {
+        setText('upload-phase-label', 'Uploading files...');
+      }
+
+      connectCombinedProgressStream(state.currentJobId);
     } else if (job.status === 'ready') {
       setUploadStep(3);
-      document.getElementById('drop-zone')?.classList.add('hidden');
-      document.getElementById('analysis-section')?.classList.remove('hidden');
-      displayAnalysisResults(job);
-    } else if (job.status === 'uploading') {
-      setUploadStep(4);
-      document.getElementById('drop-zone')?.classList.add('hidden');
-      document.getElementById('progress-section')?.classList.remove('hidden');
-      connectProgressStream();
+      hideEl('folder-browser-panel');
+      showEl('upload-section');
+      connectCombinedProgressStream(state.currentJobId);
     } else if (
       job.status === 'completed' ||
       job.status === 'failed' ||
       job.status === 'cancelled'
     ) {
-      setUploadStep(5);
-      document.getElementById('drop-zone')?.classList.add('hidden');
-      document.getElementById('completion-section')?.classList.remove('hidden');
+      setUploadStep(4);
+      hideEl('folder-browser-panel');
+      showEl('completion-section');
       showCompletionSummary(job);
     }
   } catch (error) {
@@ -53,258 +84,20 @@ export async function checkForActiveJob() {
 }
 
 /**
- * Initialize analysis table from an existing job (for state restoration).
- * @param {any} job
- */
-function initializeAnalysisTableFromJob(job) {
-  const tbody = document.getElementById('file-table-body');
-  if (!tbody) return;
-
-  tbody.innerHTML = job.files
-    .map((/** @type {any} */ file) => {
-      let statusBadge;
-      if (file.status === 'analyzing') {
-        statusBadge = `<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 inline-flex items-center">
-                <svg class="spinner h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Analyzing
-            </span>`;
-      } else if (file.status === 'failed') {
-        statusBadge =
-          '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800">Failed</span>';
-      } else if (file.is_duplicate) {
-        statusBadge =
-          '<span class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">Duplicate</span>';
-      } else {
-        statusBadge =
-          '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Ready</span>';
-      }
-
-      const startTimeDisplay = file.start_time
-        ? new Date(file.start_time).toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-        : '-';
-
-      return `
-            <tr class="file-item" data-filename="${file.filename}" data-is-analyzed="${file.status !== 'analyzing'}" data-is-duplicate="${file.is_duplicate || false}">
-                <td class="px-4 py-3">
-                    <div class="flex items-center min-w-0">
-                        <svg class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        <span class="text-sm font-medium text-gray-900 truncate" title="${file.filename}">${file.filename}</span>
-                    </div>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${file.file_size_formatted || '-'}</td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${startTimeDisplay}</td>
-                <td class="px-4 py-3 text-sm text-gray-500 truncate">${file.s3_path || '-'}</td>
-                <td class="px-4 py-3 whitespace-nowrap">${statusBadge}</td>
-            </tr>
-        `;
-    })
-    .join('');
-
-  const totalFiles = document.getElementById('total-files');
-  if (totalFiles) totalFiles.textContent = String(job.files.length);
-
-  const uploadBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById('upload-btn'));
-  if (uploadBtn) uploadBtn.disabled = true;
-}
-
-/**
- * Handle files from drag-drop or file input.
- * @param {File[]} files
- */
-export async function handleFiles(files) {
-  const formData = new FormData();
-  for (const file of files) {
-    formData.append('files', file);
-  }
-
-  showUploadSteps(3);
-
-  document.getElementById('drop-zone')?.classList.add('hidden');
-  document.getElementById('analysis-section')?.classList.remove('hidden');
-
-  initializeAnalysisTable(files);
-
-  try {
-    const response = await fetch('/api/upload/analyze', {
-      method: 'POST',
-      body: formData,
-    });
-
-    const data = await response.json();
-
-    if (!response.ok && response.status !== 202) {
-      throw new Error(data.error || 'Analysis failed');
-    }
-
-    state.currentJobId = data.job_id;
-
-    if (response.status === 202) {
-      connectAnalysisProgressStream(data.job_id);
-    } else {
-      displayAnalysisResults(data);
-    }
-  } catch (error) {
-    showNotification(/** @type {Error} */ (error).message, 'error');
-    resetUpload();
-  }
-}
-
-/**
- * Initialize the analysis table with placeholder rows.
- * @param {File[]} files
- */
-function initializeAnalysisTable(files) {
-  const tbody = document.getElementById('file-table-body');
-  if (!tbody) return;
-
-  tbody.innerHTML = files
-    .map(
-      (file) => `
-        <tr class="file-item" data-filename="${file.name}" data-is-analyzed="false" data-is-duplicate="false">
-            <td class="px-4 py-3">
-                <div class="flex items-center min-w-0">
-                    <svg class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <span class="text-sm font-medium text-gray-900 truncate" title="${file.name}">${file.name}</span>
-                </div>
-            </td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatBytes(file.size)}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">-</td>
-            <td class="px-4 py-3 text-sm text-gray-500 truncate">-</td>
-            <td class="px-4 py-3 whitespace-nowrap">
-                <span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 inline-flex items-center">
-                    <svg class="spinner h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Analyzing
-                </span>
-            </td>
-        </tr>
-    `,
-    )
-    .join('');
-
-  const totalFiles = document.getElementById('total-files');
-  if (totalFiles) totalFiles.textContent = String(files.length);
-
-  const totalSize = document.getElementById('total-size');
-  if (totalSize) totalSize.textContent = formatBytes(files.reduce((sum, f) => sum + f.size, 0));
-
-  const duplicateCount = document.getElementById('duplicate-count');
-  if (duplicateCount) duplicateCount.textContent = '0';
-
-  const uploadBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById('upload-btn'));
-  if (uploadBtn) uploadBtn.disabled = true;
-
-  const analysisCompleted = document.getElementById('analysis-completed');
-  if (analysisCompleted) analysisCompleted.textContent = '0';
-
-  const analysisTotal = document.getElementById('analysis-total');
-  if (analysisTotal) analysisTotal.textContent = String(files.length);
-
-  const analysisPercent = document.getElementById('analysis-percent');
-  if (analysisPercent) analysisPercent.textContent = '0%';
-
-  const analysisProgressBar = /** @type {HTMLElement | null} */ (
-    document.getElementById('analysis-progress-bar')
-  );
-  if (analysisProgressBar) analysisProgressBar.style.width = '0%';
-
-  document.getElementById('analysis-progress')?.classList.remove('hidden');
-}
-
-/**
- * Initialize analysis table from file paths (folder upload).
- * @param {string[]} filePaths
- */
-export function initializeAnalysisTableFromPaths(filePaths) {
-  const tbody = document.getElementById('file-table-body');
-  if (!tbody) return;
-
-  tbody.innerHTML = filePaths
-    .map((path) => {
-      const filename = path.split('/').pop();
-      return `
-            <tr class="file-item" data-filename="${filename}" data-is-analyzed="false" data-is-duplicate="false">
-                <td class="px-4 py-3">
-                    <div class="flex items-center min-w-0">
-                        <svg class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        <span class="text-sm font-medium text-gray-900 truncate" title="${filename}">${filename}</span>
-                    </div>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">-</td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">-</td>
-                <td class="px-4 py-3 text-sm text-gray-500 truncate">-</td>
-                <td class="px-4 py-3 whitespace-nowrap">
-                    <span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 inline-flex items-center">
-                        <svg class="spinner h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Analyzing
-                    </span>
-                </td>
-            </tr>
-        `;
-    })
-    .join('');
-
-  const totalFiles = document.getElementById('total-files');
-  if (totalFiles) totalFiles.textContent = String(filePaths.length);
-
-  const totalSize = document.getElementById('total-size');
-  if (totalSize) totalSize.textContent = '-';
-
-  const duplicateCount = document.getElementById('duplicate-count');
-  if (duplicateCount) duplicateCount.textContent = '0';
-
-  const uploadBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById('upload-btn'));
-  if (uploadBtn) uploadBtn.disabled = true;
-
-  const analysisCompleted = document.getElementById('analysis-completed');
-  if (analysisCompleted) analysisCompleted.textContent = '0';
-
-  const analysisTotal = document.getElementById('analysis-total');
-  if (analysisTotal) analysisTotal.textContent = String(filePaths.length);
-
-  const analysisPercent = document.getElementById('analysis-percent');
-  if (analysisPercent) analysisPercent.textContent = '0%';
-
-  const analysisProgressBar = /** @type {HTMLElement | null} */ (
-    document.getElementById('analysis-progress-bar')
-  );
-  if (analysisProgressBar) analysisProgressBar.style.width = '0%';
-
-  document.getElementById('analysis-progress')?.classList.remove('hidden');
-}
-
-/**
- * Connect to SSE stream for analysis progress updates.
+ * Connect to SSE stream for combined validation + upload progress.
  * @param {string | null} jobId
  */
-export function connectAnalysisProgressStream(jobId) {
+export function connectCombinedProgressStream(jobId) {
   if (state.eventSource) {
     state.eventSource.close();
   }
 
+  resetAnalysisState();
+
   state.eventSource = new EventSource(`/api/upload/progress/${jobId}`);
+
+  let analysisTotal = 0;
+  let analysisCompleted = 0;
 
   state.eventSource.onmessage = (event) => {
     const data = JSON.parse(event.data);
@@ -315,12 +108,32 @@ export function connectAnalysisProgressStream(jobId) {
       return;
     }
 
+    // Analysis progress: queue per-file update for next frame
     if (data.type === 'analysis_progress') {
-      updateAnalysisRow(data.file);
+      queueFileUpdate(data.file);
+
+      // Set total from the first event that carries it
+      if (data.total_files && analysisTotal === 0) {
+        analysisTotal = data.total_files;
+        setText('files-total', data.total_files);
+      }
+
+      // Only count terminal statuses for progress bar (not pending/analyzing)
+      if (data.file.status !== 'pending' && data.file.status !== 'analyzing') {
+        analysisCompleted++;
+      }
+
+      // Update progress bar for analysis phase (use float, let CSS transition smooth it)
+      if (analysisTotal > 0) {
+        const percent = (analysisCompleted / analysisTotal) * ANALYSIS_WEIGHT;
+        setProgressBar(percent);
+      }
     }
 
+    // Analysis complete: transition to upload phase
     if (data.type === 'analysis_complete') {
-      displayAnalysisResults(data.job);
+      setProgressBar(ANALYSIS_WEIGHT);
+      setPhaseLabel('Preparing upload...');
 
       if (!data.auto_upload) {
         state.eventSource?.close();
@@ -328,22 +141,33 @@ export function connectAnalysisProgressStream(jobId) {
       }
     }
 
+    // Auto-upload starting
     if (data.type === 'auto_upload_starting') {
-      showNotification('Auto-upload starting...', 'info');
-      setUploadStep(4);
-      document.getElementById('analysis-section')?.classList.add('hidden');
-      document.getElementById('progress-section')?.classList.remove('hidden');
+      currentPhase = 'upload';
+      setPhaseLabel('Uploading files...');
     }
 
+    // Upload progress updates (job-level data without a type field)
     if (!data.type && data.job_id && data.status) {
       if (data.status === 'uploading') {
-        updateProgressUI(data);
+        // Remap upload progress into the UPLOAD_WEIGHT portion of the bar
+        const adjusted = {
+          ...data,
+          progress_percent: ANALYSIS_WEIGHT + (data.progress_percent / 100) * UPLOAD_WEIGHT,
+        };
+        pendingProgressData = adjusted;
+
+        // Queue per-file row updates
+        if (data.files) {
+          for (const file of data.files) {
+            queueFileUpdate(file);
+          }
+        }
+        scheduleRaf();
       } else if (['completed', 'failed', 'cancelled'].includes(data.status)) {
         state.eventSource?.close();
         state.eventSource = null;
         showCompletionSummary(data);
-      } else if (data.status === 'ready') {
-        displayAnalysisResults(data);
       }
     }
   };
@@ -358,226 +182,211 @@ export function connectAnalysisProgressStream(jobId) {
 }
 
 /**
- * Update a single row in the analysis table.
+ * Set the overall progress bar value (CSS transition handles smoothing).
+ * @param {number} percent
+ */
+function setProgressBar(percent) {
+  const progressBar = /** @type {HTMLElement | null} */ (document.getElementById('progress-bar'));
+  if (progressBar) progressBar.style.width = `${percent}%`;
+  setText('progress-percent', percent.toFixed(1));
+}
+
+/**
+ * Update the phase label with an opacity fade transition.
+ * @param {string} text
+ */
+function setPhaseLabel(text) {
+  const phaseLabel = document.getElementById('upload-phase-label');
+  if (!phaseLabel || phaseLabel.textContent === text) return;
+  phaseLabel.style.opacity = '0';
+  setTimeout(() => {
+    phaseLabel.textContent = text;
+    phaseLabel.style.opacity = '1';
+  }, 150);
+}
+
+/**
+ * Queue a file update for the next animation frame.
  * @param {any} fileData
  */
-function updateAnalysisRow(fileData) {
-  const row = /** @type {HTMLTableRowElement | null} */ (
-    document.querySelector(`tr[data-filename="${fileData.filename}"]`)
-  );
-  if (!row) return;
-
-  let statusBadge;
-  if (fileData.status === 'failed') {
-    statusBadge = `<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800" title="${fileData.error_message || ''}">Failed</span>`;
-  } else if (fileData.is_duplicate) {
-    statusBadge =
-      '<span class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">Duplicate</span>';
-  } else if (fileData.is_valid === false) {
-    statusBadge =
-      '<span class="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800" title="Invalid timestamp (pre-1980)">Invalid</span>';
-  } else if (fileData.status === 'ready') {
-    statusBadge =
-      '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Ready</span>';
-  } else {
-    statusBadge = `<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 inline-flex items-center">
-            <svg class="spinner h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            Analyzing
-        </span>`;
-  }
-
-  row.dataset.status = fileData.status;
-  row.dataset.isDuplicate = fileData.is_duplicate ? 'true' : 'false';
-  row.dataset.isAnalyzed =
-    fileData.status === 'ready' || fileData.status === 'failed' ? 'true' : 'false';
-
-  const startTimeDisplay = fileData.start_time
-    ? new Date(fileData.start_time).toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-    : '-';
-
-  row.innerHTML = `
-        <td class="px-4 py-3">
-            <div class="flex items-center min-w-0">
-                <svg class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span class="text-sm font-medium text-gray-900 truncate" title="${fileData.filename}">${fileData.filename}</span>
-            </div>
-        </td>
-        <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${fileData.file_size_formatted}</td>
-        <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500" title="${fileData.start_time || ''}">${startTimeDisplay}</td>
-        <td class="px-4 py-3 text-sm text-gray-500 truncate" title="${fileData.s3_path || ''}">${fileData.s3_path || '-'}</td>
-        <td class="px-4 py-3 whitespace-nowrap">${statusBadge}</td>
-    `;
-
-  updateAnalysisProgress();
-  updateAnalysisSummary();
-  applyUploadedFilter();
+function queueFileUpdate(fileData) {
+  pendingFileUpdates.set(fileData.filename, fileData);
+  scheduleRaf();
 }
 
-function updateAnalysisSummary() {
-  const rows = document.querySelectorAll('#file-table-body tr[data-filename]');
-  let duplicateCount = 0;
+/** Schedule a requestAnimationFrame if not already pending. */
+function scheduleRaf() {
+  if (!rafScheduled) {
+    rafScheduled = true;
+    requestAnimationFrame(flushUpdates);
+  }
+}
 
-  for (const row of rows) {
-    const badge = row.querySelector('td:last-child span');
-    if (badge?.textContent?.includes('Duplicate')) {
-      duplicateCount++;
+/** Flush all pending updates in a single animation frame. */
+function flushUpdates() {
+  rafScheduled = false;
+
+  // Flush pending file row updates
+  for (const [, fileData] of pendingFileUpdates) {
+    updateUploadFileRow(fileData);
+  }
+  pendingFileUpdates.clear();
+
+  // Recompute queue positions after row updates
+  recomputeQueuePositions();
+
+  // Flush pending overall progress
+  if (pendingProgressData) {
+    updateProgressUI(pendingProgressData);
+    pendingProgressData = null;
+  }
+}
+
+/**
+ * Recompute "Queued (X of Y)" labels for pending/ready-queued files.
+ */
+function recomputeQueuePositions() {
+  const allRows = document.querySelectorAll('[data-upload-file]');
+  // Determine which statuses count as "queued" based on current phase
+  const queuedStatuses = currentPhase === 'upload' ? ['ready'] : ['pending'];
+
+  // First pass: count queued files
+  let totalQueued = 0;
+  for (const row of allRows) {
+    const filename = /** @type {HTMLElement} */ (row).getAttribute('data-upload-file');
+    const status = fileRowStatusCache.get(filename || '');
+    if (status && queuedStatuses.includes(status)) {
+      totalQueued++;
     }
   }
 
-  const el = document.getElementById('duplicate-count');
-  if (el) el.textContent = String(duplicateCount);
-}
+  if (totalQueued === 0) return;
 
-function updateAnalysisProgress() {
-  const rows = document.querySelectorAll('#file-table-body tr[data-filename]');
-  const total = rows.length;
-  let analyzed = 0;
-
-  for (const row of rows) {
-    if (/** @type {HTMLElement} */ (row).dataset.isAnalyzed === 'true') {
-      analyzed++;
-    }
-  }
-
-  const percent = total > 0 ? Math.round((analyzed / total) * 100) : 0;
-
-  const analysisCompleted = document.getElementById('analysis-completed');
-  if (analysisCompleted) analysisCompleted.textContent = String(analyzed);
-
-  const analysisTotal = document.getElementById('analysis-total');
-  if (analysisTotal) analysisTotal.textContent = String(total);
-
-  const analysisPercent = document.getElementById('analysis-percent');
-  if (analysisPercent) analysisPercent.textContent = `${percent}%`;
-
-  const analysisProgressBar = /** @type {HTMLElement | null} */ (
-    document.getElementById('analysis-progress-bar')
-  );
-  if (analysisProgressBar) analysisProgressBar.style.width = `${percent}%`;
-
-  const progressSection = document.getElementById('analysis-progress');
-  if (analyzed === total && total > 0) {
-    progressSection?.classList.add('hidden');
-  } else {
-    progressSection?.classList.remove('hidden');
-  }
-}
-
-export function applyUploadedFilter() {
-  const hideUploadedEl = /** @type {HTMLInputElement | null} */ (
-    document.getElementById('hide-uploaded')
-  );
-  const hideUploaded = hideUploadedEl?.checked || false;
-  const rows = document.querySelectorAll('#file-table-body tr[data-filename]');
-
-  for (const row of rows) {
-    if (hideUploaded && /** @type {HTMLElement} */ (row).dataset.isDuplicate === 'true') {
-      row.classList.add('hidden');
-    } else {
-      row.classList.remove('hidden');
+  // Second pass: assign positions
+  let pos = 1;
+  for (const row of allRows) {
+    const filename = /** @type {HTMLElement} */ (row).getAttribute('data-upload-file');
+    const status = fileRowStatusCache.get(filename || '');
+    if (status && queuedStatuses.includes(status)) {
+      const label = row.querySelector('[data-queue-label]');
+      if (label) {
+        label.textContent =
+          currentPhase === 'upload'
+            ? `Queued for upload (${pos} of ${totalQueued})`
+            : `Queued (${pos} of ${totalQueued})`;
+      }
+      pos++;
     }
   }
 }
 
 /**
- * Display final analysis results.
- * @param {any} job
+ * Update a single file row with minimal DOM changes.
+ * Only rebuilds innerHTML on status transitions; for uploading progress,
+ * just updates the bar width and percentage text to avoid resetting spinners.
+ * @param {any} fileData
  */
-export function displayAnalysisResults(job) {
-  const tbody = document.getElementById('file-table-body');
-  if (!tbody) return;
+function updateUploadFileRow(fileData) {
+  const row = document.querySelector(`[data-upload-file="${fileData.filename}"]`);
+  if (!row) return;
 
-  let totalSize = 0;
-  let duplicateCount = 0;
-  let invalidCount = 0;
+  const cachedStatus = fileRowStatusCache.get(fileData.filename);
+  const newStatus = fileData.is_duplicate ? `${fileData.status}:dup` : fileData.status;
 
-  tbody.innerHTML = job.files
-    .map((/** @type {any} */ file) => {
-      totalSize += file.file_size;
-      if (file.is_duplicate) duplicateCount++;
-      if (file.is_valid === false) invalidCount++;
-
-      let statusBadge;
-      if (file.status === 'failed') {
-        statusBadge = `<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-800" title="${file.error_message}">Failed</span>`;
-      } else if (file.is_duplicate) {
-        statusBadge =
-          '<span class="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">Duplicate</span>';
-      } else if (file.is_valid === false) {
-        statusBadge =
-          '<span class="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800" title="Invalid timestamp (pre-1980)">Invalid</span>';
-      } else {
-        statusBadge =
-          '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Ready</span>';
+  // If status hasn't changed, only do micro-updates for uploading progress
+  if (cachedStatus === newStatus) {
+    if (fileData.status === 'uploading') {
+      const bar = /** @type {HTMLElement | null} */ (row.querySelector('[data-progress-bar]'));
+      if (bar) bar.style.width = `${fileData.progress_percent || 0}%`;
+      const label = row.querySelector('[data-progress-label]');
+      if (label) {
+        label.textContent =
+          fileData.progress_percent != null ? `${fileData.progress_percent.toFixed(0)}%` : '';
       }
-
-      const startTimeDisplay = file.start_time
-        ? new Date(file.start_time).toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-        : '-';
-
-      return `
-            <tr class="file-item" data-filename="${file.filename}"
-                data-status="${file.status}"
-                data-is-duplicate="${file.is_duplicate ? 'true' : 'false'}"
-                data-is-analyzed="true">
-                <td class="px-4 py-3">
-                    <div class="flex items-center min-w-0">
-                        <svg class="h-5 w-5 text-gray-400 mr-2 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        <span class="text-sm font-medium text-gray-900 truncate" title="${file.filename}">${file.filename}</span>
-                    </div>
-                </td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${file.file_size_formatted}</td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500" title="${file.start_time || ''}">${startTimeDisplay}</td>
-                <td class="px-4 py-3 text-sm text-gray-500 truncate" title="${file.s3_path || ''}">${file.s3_path || '-'}</td>
-                <td class="px-4 py-3 whitespace-nowrap">${statusBadge}</td>
-            </tr>
-        `;
-    })
-    .join('');
-
-  const totalFilesEl = document.getElementById('total-files');
-  if (totalFilesEl) totalFilesEl.textContent = String(job.files.length);
-
-  const totalSizeEl = document.getElementById('total-size');
-  if (totalSizeEl) totalSizeEl.textContent = formatBytes(totalSize);
-
-  const duplicateCountEl = document.getElementById('duplicate-count');
-  if (duplicateCountEl) {
-    duplicateCountEl.textContent =
-      String(duplicateCount) + (invalidCount > 0 ? ` + ${invalidCount} invalid` : '');
+    }
+    return;
   }
 
-  document.getElementById('analysis-progress')?.classList.add('hidden');
+  // Status changed — full rebuild of the row
+  fileRowStatusCache.set(fileData.filename, newStatus);
+  row.innerHTML = buildFileRowHTML(fileData);
+}
 
-  const hasUploadableFiles = job.files.some(
-    (/** @type {any} */ f) => f.status === 'ready' && f.is_valid !== false && !f.is_duplicate,
-  );
-  const uploadBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById('upload-btn'));
-  if (uploadBtn) uploadBtn.disabled = !hasUploadableFiles;
+/**
+ * Build the full HTML for a file row.
+ * @param {any} fileData
+ * @returns {string}
+ */
+function buildFileRowHTML(fileData) {
+  let statusIcon = '';
+  let statusText = '';
 
-  const descriptionEl = document.getElementById('step-description');
-  if (descriptionEl) {
-    descriptionEl.textContent = STEP_3_VALIDATED;
+  if (fileData.status === 'completed') {
+    statusIcon =
+      '<svg class="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>';
+    statusText = '<span class="text-xs text-green-600">Uploaded</span>';
+  } else if (fileData.status === 'failed') {
+    statusIcon =
+      '<svg class="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>';
+    statusText = `<span class="text-xs text-red-600" title="${fileData.error_message || ''}">Failed</span>`;
+  } else if (fileData.status === 'skipped') {
+    statusIcon =
+      '<svg class="h-5 w-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 9l3 3m0 0l-3 3m3-3H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>';
+    statusText = '<span class="text-xs text-yellow-600">Skipped</span>';
+  } else if (fileData.status === 'uploading') {
+    statusIcon =
+      '<svg class="spinner h-5 w-5 text-nlr-blue" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+    const pct = fileData.progress_percent != null ? `${fileData.progress_percent.toFixed(0)}%` : '';
+    statusText = `
+      <div class="flex items-center space-x-2">
+        <div class="w-16 bg-gray-200 rounded-full h-2">
+          <div data-progress-bar class="bg-nlr-blue h-2 rounded-full transition-[width] duration-300 ease-out" style="width: ${fileData.progress_percent || 0}%"></div>
+        </div>
+        <span data-progress-label class="text-xs text-gray-500 w-8">${pct}</span>
+      </div>`;
+  } else if (fileData.status === 'analyzing') {
+    statusIcon =
+      '<svg class="spinner h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+    statusText = '<span class="text-xs text-blue-600">Validating</span>';
+  } else if (fileData.status === 'ready') {
+    if (fileData.is_duplicate) {
+      statusIcon =
+        '<svg class="h-5 w-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>';
+      statusText = '<span class="text-xs text-yellow-600">Duplicate</span>';
+    } else if (currentPhase === 'upload') {
+      // In upload phase, non-duplicate ready files are queued for upload
+      statusIcon =
+        '<div class="h-5 w-5 text-gray-400"><svg class="h-5 w-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div>';
+      statusText = '<span data-queue-label class="text-xs text-gray-500">Queued for upload</span>';
+    } else {
+      statusIcon =
+        '<svg class="h-5 w-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4" /></svg>';
+      statusText = '<span class="text-xs text-green-600">Validated</span>';
+    }
+  } else if (fileData.status === 'pending') {
+    statusIcon =
+      '<div class="h-5 w-5 text-gray-400"><svg class="h-5 w-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div>';
+    statusText = '<span data-queue-label class="text-xs text-gray-500">Queued</span>';
+  } else {
+    statusText = `<span class="text-xs text-gray-400">${fileData.status || 'Unknown'}</span>`;
   }
 
-  applyUploadedFilter();
+  return `
+    <div class="flex items-center space-x-3">
+        ${statusIcon || '<div class="h-5 w-5"></div>'}
+        <span class="text-sm text-gray-900">${fileData.filename}</span>
+    </div>
+    <div class="flex items-center space-x-4">
+        ${fileData.file_size_formatted ? `<span class="text-sm text-gray-500">${fileData.file_size_formatted}</span>` : ''}
+        ${statusText}
+    </div>
+  `;
+}
+
+/**
+ * @param {any} fileData
+ * @returns {string}
+ */
+export function formatFileSize(fileData) {
+  return fileData.file_size_formatted || formatBytes(fileData.file_size || 0);
 }

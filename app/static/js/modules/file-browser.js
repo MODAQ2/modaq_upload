@@ -1,8 +1,13 @@
 /**
  * S3 file browser page functionality.
  */
+import { apiGet } from './api.js';
+import { debounce } from './debounce.js';
+import { hideEl, setText, showEl } from './dom.js';
+import { formatBytes } from './formatters.js';
+import { fileIcon, folderIcon } from './icons.js';
+import { showNotification } from './notify.js';
 import state from './state.js';
-import { formatBytes, showNotification } from './utils.js';
 
 export function initFileBrowser() {
   const refreshBtn = document.getElementById('refresh-btn');
@@ -18,32 +23,25 @@ export function initFileBrowser() {
   retryBtn?.addEventListener('click', () => loadFiles(state.currentPrefix));
   closeSearchBtn?.addEventListener('click', hideSearchResults);
 
-  let searchTimeout = 0;
-  searchInput?.addEventListener('input', () => {
-    clearTimeout(searchTimeout);
-    searchTimeout = window.setTimeout(() => {
-      const query = searchInput.value.trim();
-      if (query.length >= 2) {
-        searchFiles(query);
-      } else {
-        hideSearchResults();
-      }
-    }, 300);
-  });
+  const debouncedSearch = debounce(() => {
+    const query = searchInput?.value.trim() || '';
+    if (query.length >= 2) {
+      searchFiles(query);
+    } else {
+      hideSearchResults();
+    }
+  }, 300);
+  searchInput?.addEventListener('input', debouncedSearch);
 
   loadSettings().then(() => loadFiles(''));
 }
 
 async function loadSettings() {
   try {
-    const response = await fetch('/api/settings');
-    const settings = await response.json();
-
-    const bucketName = document.getElementById('bucket-name');
-    if (bucketName) bucketName.textContent = settings.s3_bucket || 'No bucket configured';
+    const settings = await apiGet('/api/settings');
+    setText('bucket-name', settings.s3_bucket || 'No bucket configured');
   } catch (_error) {
-    const bucketName = document.getElementById('bucket-name');
-    if (bucketName) bucketName.textContent = 'Error loading settings';
+    setText('bucket-name', 'Error loading settings');
   }
 }
 
@@ -53,35 +51,32 @@ async function loadSettings() {
 async function loadFiles(prefix) {
   state.currentPrefix = prefix;
 
-  document.getElementById('loading-state')?.classList.remove('hidden');
-  document.getElementById('error-state')?.classList.add('hidden');
-  document.getElementById('empty-state')?.classList.add('hidden');
-  document.getElementById('file-list')?.classList.add('hidden');
+  showEl('loading-state');
+  hideEl('error-state');
+  hideEl('empty-state');
+  hideEl('file-list');
 
   try {
-    const response = await fetch(`/api/files/list?prefix=${encodeURIComponent(prefix)}`);
-    const data = await response.json();
+    const data = await apiGet(`/api/files/list?prefix=${encodeURIComponent(prefix)}`);
 
-    if (!response.ok || !data.success) {
+    if (!data.success) {
       throw new Error(data.error || 'Failed to load files');
     }
 
-    document.getElementById('loading-state')?.classList.add('hidden');
+    hideEl('loading-state');
 
     updateBreadcrumb(data.breadcrumbs || []);
 
     if (data.folders.length === 0 && data.files.length === 0) {
-      document.getElementById('empty-state')?.classList.remove('hidden');
+      showEl('empty-state');
       return;
     }
 
     displayFiles(data.folders, data.files);
   } catch (error) {
-    document.getElementById('loading-state')?.classList.add('hidden');
-    document.getElementById('error-state')?.classList.remove('hidden');
-
-    const errorMessage = document.getElementById('error-message');
-    if (errorMessage) errorMessage.textContent = /** @type {Error} */ (error).message;
+    hideEl('loading-state');
+    showEl('error-state');
+    setText('error-message', /** @type {Error} */ (error).message);
   }
 }
 
@@ -93,12 +88,12 @@ function updateBreadcrumb(breadcrumbs) {
   if (!nav) return;
 
   nav.innerHTML = `
-        <a href="#" data-prefix="" class="text-nrel-blue hover:underline">Root</a>
+        <a href="#" data-prefix="" class="text-nlr-blue hover:underline">Root</a>
         ${breadcrumbs
           .map(
             (b) => `
             <span class="text-gray-400">/</span>
-            <a href="#" data-prefix="${b.prefix}" class="text-nrel-blue hover:underline">${b.name}</a>
+            <a href="#" data-prefix="${b.prefix}" class="text-nlr-blue hover:underline">${b.name}</a>
         `,
           )
           .join('')}
@@ -124,9 +119,7 @@ function displayFiles(folders, files) {
     ...folders.map(
       (folder) => `
             <div class="file-item px-6 py-3 flex items-center cursor-pointer" data-prefix="${folder.prefix}">
-                <svg class="h-5 w-5 text-nrel-yellow mr-3" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                </svg>
+                ${folderIcon()}
                 <span class="text-sm font-medium text-gray-900">${folder.name}/</span>
             </div>
         `,
@@ -135,10 +128,7 @@ function displayFiles(folders, files) {
       (file) => `
             <div class="file-item px-6 py-3 flex items-center justify-between">
                 <div class="flex items-center">
-                    <svg class="h-5 w-5 text-gray-400 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
+                    ${fileIcon()}
                     <span class="text-sm text-gray-900">${file.name}</span>
                 </div>
                 <div class="flex items-center space-x-4 text-sm text-gray-500">
@@ -150,7 +140,7 @@ function displayFiles(folders, files) {
     ),
   ].join('');
 
-  fileList.classList.remove('hidden');
+  showEl('file-list');
 
   for (const el of fileList.querySelectorAll('[data-prefix]')) {
     el.addEventListener('click', () =>
@@ -164,15 +154,9 @@ function displayFiles(folders, files) {
  */
 async function searchFiles(query) {
   try {
-    const response = await fetch(
+    const data = await apiGet(
       `/api/files/search?query=${encodeURIComponent(query)}&prefix=${encodeURIComponent(state.currentPrefix)}`,
     );
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Search failed');
-    }
-
     showSearchResults(data.files, query);
   } catch (error) {
     showNotification(/** @type {Error} */ (error).message, 'error');
@@ -196,10 +180,7 @@ function showSearchResults(files, _query) {
             (file) => `
                 <div class="px-6 py-3 flex items-center justify-between">
                     <div class="flex items-center">
-                        <svg class="h-5 w-5 text-gray-400 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
+                        ${fileIcon()}
                         <div>
                             <div class="text-sm text-gray-900">${file.name}</div>
                             <div class="text-xs text-gray-500">${file.key}</div>
@@ -211,11 +192,11 @@ function showSearchResults(files, _query) {
           )
           .join('');
 
-  container.classList.remove('hidden');
+  showEl('search-results');
 }
 
 function hideSearchResults() {
-  document.getElementById('search-results')?.classList.add('hidden');
+  hideEl('search-results');
 
   const searchInput = /** @type {HTMLInputElement | null} */ (
     document.getElementById('search-input')

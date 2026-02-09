@@ -5,6 +5,7 @@ from flask import Blueprint, Response, jsonify, request
 from app.config import get_package_version, get_settings, get_updater
 from app.services import s3_service
 from app.services.cache_service import get_cache_service
+from app.services.log_service import get_log_service
 
 settings_bp = Blueprint("settings", __name__)
 
@@ -40,13 +41,24 @@ def update_settings() -> tuple[Response, int]:
     settings = get_settings()
 
     # Validate settings
-    allowed_keys = {"aws_profile", "aws_region", "s3_bucket", "default_upload_folder"}
+    allowed_keys = {
+        "aws_profile", "aws_region", "s3_bucket", "default_upload_folder", "display_name",
+        "log_directory",
+    }
     filtered_data = {k: v for k, v in data.items() if k in allowed_keys}
 
     if not filtered_data:
         return jsonify({"error": "No valid settings provided"}), 400
 
     settings.update(filtered_data)
+
+    log = get_log_service()
+    log.info(
+        "settings",
+        "settings_updated",
+        f"Updated settings: {', '.join(filtered_data.keys())}",
+        {"changed_keys": list(filtered_data.keys())},
+    )
 
     return jsonify(settings.all()), 200
 
@@ -90,11 +102,18 @@ def validate_connection() -> tuple[Response, int]:
     if not bucket:
         return jsonify({"error": "S3 bucket not specified"}), 400
 
+    log = get_log_service()
     try:
         client = s3_service.create_s3_client(profile, region)
         result = s3_service.validate_bucket_access(client, bucket)
 
         if result["success"]:
+            log.info(
+                "settings",
+                "connection_test",
+                f"Connection test succeeded for bucket '{bucket}'",
+                {"bucket": bucket, "profile": profile, "region": region, "success": True},
+            )
             return jsonify(
                 {
                     "success": True,
@@ -102,6 +121,18 @@ def validate_connection() -> tuple[Response, int]:
                 }
             ), 200
         else:
+            log.warning(
+                "settings",
+                "connection_test",
+                f"Connection test failed for bucket '{bucket}': {result['error']}",
+                {
+                    "bucket": bucket,
+                    "profile": profile,
+                    "region": region,
+                    "success": False,
+                    "error": result["error"],
+                },
+            )
             return jsonify(
                 {
                     "success": False,
@@ -110,6 +141,12 @@ def validate_connection() -> tuple[Response, int]:
             ), 200
 
     except Exception as e:
+        log.error(
+            "settings",
+            "connection_test",
+            f"Connection test error for bucket '{bucket}': {e}",
+            {"bucket": bucket, "profile": profile, "region": region, "error": str(e)},
+        )
         return jsonify(
             {
                 "success": False,

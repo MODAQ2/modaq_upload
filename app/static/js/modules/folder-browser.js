@@ -1,100 +1,68 @@
-import { connectAnalysisProgressStream, initializeAnalysisTableFromPaths } from './analysis.js';
+import { connectCombinedProgressStream } from './analysis.js';
+import { apiGet, apiPost } from './api.js';
+import { hideEl, setText, showEl } from './dom.js';
+import { formatBytes, formatMtime } from './formatters.js';
+import { fileIcon, folderIcon } from './icons.js';
+import { showNotification } from './notify.js';
+import { toggleSort, updateSortIndicators } from './sorting-helpers.js';
 /**
- * Folder browser modal and scan results for folder-based upload.
+ * Inline folder browser and scan results for folder-based upload.
  */
 import state from './state.js';
 import { setUploadStep, showUploadSteps } from './stepper.js';
-import { formatBytes, showNotification } from './utils.js';
 
 /**
- * Initialize folder browser modal handlers.
+ * Initialize the inline folder browser and auto-load initial folder.
  */
-export function initFolderBrowser() {
-  const modal = document.getElementById('folder-browser-modal');
-  if (!modal) return;
+export async function initFolderBrowser() {
+  const panel = document.getElementById('folder-browser-panel');
+  if (!panel) return;
 
-  document.getElementById('close-folder-browser')?.addEventListener('click', closeFolderBrowser);
-  document.getElementById('cancel-folder-browser')?.addEventListener('click', closeFolderBrowser);
+  document.getElementById('select-folder-btn')?.addEventListener('click', selectCurrentFolder);
 
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal.querySelector('.fixed.inset-0')) {
-      closeFolderBrowser();
+  // Delegated click handler for folder navigation (shared across 3 containers)
+  /** @param {Event} e */
+  function handleFolderNavClick(e) {
+    const target = /** @type {HTMLElement} */ (e.target).closest('[data-action="navigate-folder"]');
+    if (target) {
+      loadFolderBrowser(/** @type {HTMLElement} */ (target).dataset.path || '');
     }
-  });
+  }
 
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
-      closeFolderBrowser();
-    }
-  });
+  document.getElementById('folder-list')?.addEventListener('click', handleFolderNavClick);
+  document.getElementById('folder-quick-links')?.addEventListener('click', handleFolderNavClick);
+  document.getElementById('folder-breadcrumb')?.addEventListener('click', handleFolderNavClick);
 
-  document.getElementById('select-current-folder')?.addEventListener('click', selectCurrentFolder);
-
-  // Delegated click handler for folder navigation
-  const folderList = document.getElementById('folder-list');
-  if (folderList) {
-    folderList.addEventListener('click', (e) => {
-      const target = /** @type {HTMLElement} */ (e.target).closest(
-        '[data-action="navigate-folder"]',
-      );
-      if (target) {
-        loadFolderBrowser(/** @type {HTMLElement} */ (target).dataset.path || '');
+  // Sort header click handler (Review table)
+  const scanSection = document.getElementById('scan-results-section');
+  if (scanSection) {
+    scanSection.addEventListener('click', (e) => {
+      const th = /** @type {HTMLElement} */ (e.target).closest('[data-sort]');
+      if (th) {
+        sortReviewTable(/** @type {HTMLElement} */ (th).dataset.sort || 'filename');
       }
     });
   }
 
-  const quickLinks = document.getElementById('folder-quick-links');
-  if (quickLinks) {
-    quickLinks.addEventListener('click', (e) => {
-      const target = /** @type {HTMLElement} */ (e.target).closest(
-        '[data-action="navigate-folder"]',
-      );
-      if (target) {
-        loadFolderBrowser(/** @type {HTMLElement} */ (target).dataset.path || '');
+  // Sort header click handler (File browser table)
+  const fileTableHead = document.getElementById('file-table-head');
+  if (fileTableHead) {
+    fileTableHead.addEventListener('click', (e) => {
+      const th = /** @type {HTMLElement} */ (e.target).closest('[data-file-sort]');
+      if (th) {
+        sortBrowserFileTable(/** @type {HTMLElement} */ (th).dataset.fileSort || 'name');
       }
     });
   }
 
-  const breadcrumb = document.getElementById('folder-breadcrumb');
-  if (breadcrumb) {
-    breadcrumb.addEventListener('click', (e) => {
-      const target = /** @type {HTMLElement} */ (e.target).closest(
-        '[data-action="navigate-folder"]',
-      );
-      if (target) {
-        loadFolderBrowser(/** @type {HTMLElement} */ (target).dataset.path || '');
-      }
-    });
-  }
-}
-
-export function closeFolderBrowser() {
-  const modal = document.getElementById('folder-browser-modal');
-  if (modal) modal.classList.add('hidden');
-  document.body.style.overflow = '';
-}
-
-/**
- * Open the folder browser modal.
- */
-export async function openFolderBrowser() {
-  const modal = document.getElementById('folder-browser-modal');
-  if (modal) modal.classList.remove('hidden');
-  document.body.style.overflow = 'hidden';
-
+  // Auto-load: use last folder or default from settings
   const lastFolder = localStorage.getItem('lastUploadFolder');
-
   if (lastFolder) {
     loadFolderBrowser(lastFolder);
   } else {
     try {
-      const response = await fetch('/api/settings');
-      const settings = await response.json();
-      if (settings.default_upload_folder) {
-        loadFolderBrowser(settings.default_upload_folder);
-      } else {
-        loadFolderBrowser('');
-      }
+      const settings = await apiGet('/api/settings');
+      loadFolderBrowser(settings.default_upload_folder || '');
     } catch (_error) {
       loadFolderBrowser('');
     }
@@ -103,17 +71,14 @@ export async function openFolderBrowser() {
 
 /**
  * Load folder contents from the backend.
+ * Uses raw fetch for complex retry-on-failure logic.
  * @param {string} path
  * @param {boolean} [isRetry]
  */
 export async function loadFolderBrowser(path, isRetry = false) {
-  const folderList = document.getElementById('folder-list');
-  const loadingState = document.getElementById('folder-loading');
-  const errorState = document.getElementById('folder-error');
-
-  if (folderList) folderList.classList.add('hidden');
-  if (errorState) errorState.classList.add('hidden');
-  if (loadingState) loadingState.classList.remove('hidden');
+  hideEl('folder-list');
+  hideEl('folder-error');
+  showEl('folder-loading');
 
   try {
     const url = path ? `/api/files/browse?path=${encodeURIComponent(path)}` : '/api/files/browse';
@@ -138,7 +103,7 @@ export async function loadFolderBrowser(path, isRetry = false) {
       if (lastUsedFolder && lastUsedFolder !== data.current_path) {
         const lastFolderName = lastUsedFolder.split('/').pop() || lastUsedFolder;
         quickLinksHtml += `
-                    <button class="px-3 py-1 text-sm bg-nrel-blue text-white hover:bg-nrel-blue-light rounded-md whitespace-nowrap"
+                    <button class="px-3 py-1 text-sm bg-nlr-blue text-white hover:bg-nlr-blue-light rounded-md whitespace-nowrap"
                             data-action="navigate-folder" data-path="${lastUsedFolder}">
                         Last: ${lastFolderName}
                     </button>
@@ -166,7 +131,7 @@ export async function loadFolderBrowser(path, isRetry = false) {
         .map(
           (/** @type {{ name: string, path: string }} */ crumb, /** @type {number} */ i) => `
                 ${i > 0 ? '<span class="text-gray-400">/</span>' : ''}
-                <button class="text-nrel-blue hover:underline whitespace-nowrap"
+                <button class="text-nlr-blue hover:underline whitespace-nowrap"
                         data-action="navigate-folder" data-path="${crumb.path}">
                     ${crumb.name}
                 </button>
@@ -176,22 +141,35 @@ export async function loadFolderBrowser(path, isRetry = false) {
     }
 
     // Update MCAP count
-    const mcapCount = document.getElementById('folder-mcap-count');
-    if (mcapCount) mcapCount.textContent = String(data.mcap_count);
+    setText('folder-mcap-count', data.mcap_count);
 
-    // Enable/disable select button
-    const selectBtn = /** @type {HTMLButtonElement | null} */ (
-      document.getElementById('select-current-folder')
+    // Enable select button and store current path
+    const selectFolderBtn = /** @type {HTMLButtonElement | null} */ (
+      document.getElementById('select-folder-btn')
     );
-    if (selectBtn) {
-      selectBtn.disabled = false;
-      selectBtn.dataset.path = data.current_path;
+    if (selectFolderBtn) {
+      selectFolderBtn.disabled = false;
+      selectFolderBtn.dataset.path = data.current_path;
+    }
+
+    // Update bottom summary with MCAP count
+    if (data.mcap_count > 0) {
+      setText(
+        'folder-select-summary',
+        `${data.mcap_count} MCAP file${data.mcap_count === 1 ? '' : 's'} in this folder.`,
+      );
+    } else {
+      setText(
+        'folder-select-summary',
+        'Navigate to the folder containing your MCAP files, then click Upload Folder.',
+      );
     }
 
     // Render folder list
-    if (loadingState) loadingState.classList.add('hidden');
-    if (folderList) folderList.classList.remove('hidden');
+    hideEl('folder-loading');
+    showEl('folder-list');
 
+    const folderList = document.getElementById('folder-list');
     if (folderList) {
       if (data.folders.length === 0 && data.files.length === 0) {
         folderList.innerHTML =
@@ -214,9 +192,7 @@ export async function loadFolderBrowser(path, isRetry = false) {
                         <div class="px-6 py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
                              data-action="navigate-folder" data-path="${folder.path}">
                             <div class="flex items-center">
-                                <svg class="h-5 w-5 text-nrel-yellow mr-3" fill="currentColor" viewBox="0 0 20 20">
-                                    <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                                </svg>
+                                ${folderIcon()}
                                 <span class="text-sm font-medium text-gray-900">${folder.name}</span>
                             </div>
                             ${
@@ -227,36 +203,27 @@ export async function loadFolderBrowser(path, isRetry = false) {
                         </div>
                     `,
           ),
-          ...data.files.slice(0, 10).map(
-            (/** @type {{ name: string, size: number }} */ file) => `
-                        <div class="px-6 py-3 flex items-center justify-between bg-gray-50">
-                            <div class="flex items-center">
-                                <svg class="h-5 w-5 text-gray-400 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                </svg>
-                                <span class="text-sm text-gray-600">${file.name}</span>
-                            </div>
-                            <span class="text-xs text-gray-500">${formatBytes(file.size)}</span>
-                        </div>
-                    `,
-          ),
-          data.files.length > 10
-            ? `
-                        <div class="px-6 py-2 text-center text-xs text-gray-500">
-                            ... and ${data.files.length - 10} more MCAP files
-                        </div>
-                    `
-            : '',
         ].join('');
       }
     }
-  } catch (error) {
-    if (loadingState) loadingState.classList.add('hidden');
-    if (errorState) errorState.classList.remove('hidden');
 
-    const errorMessage = document.getElementById('folder-error-message');
-    if (errorMessage) errorMessage.textContent = /** @type {Error} */ (error).message;
+    // Render MCAP file table
+    if (data.files.length > 0) {
+      state.browserFiles = data.files;
+      state.browserFileSortConfig = state.browserFileSortConfig || {
+        column: 'name',
+        ascending: true,
+      };
+      renderBrowserFileTable();
+      showEl('file-table-section');
+    } else {
+      state.browserFiles = [];
+      hideEl('file-table-section');
+    }
+  } catch (error) {
+    hideEl('folder-loading');
+    showEl('folder-error');
+    setText('folder-error-message', /** @type {Error} */ (error).message);
   }
 }
 
@@ -264,29 +231,20 @@ export async function loadFolderBrowser(path, isRetry = false) {
  * Select the current folder and scan for MCAP files.
  */
 async function selectCurrentFolder() {
-  const selectBtn = /** @type {HTMLButtonElement | null} */ (
-    document.getElementById('select-current-folder')
+  const btn = /** @type {HTMLButtonElement | null} */ (
+    document.getElementById('select-folder-btn')
   );
-  if (!selectBtn) return;
+  if (!btn) return;
 
-  const folderPath = selectBtn.dataset.path;
+  const folderPath = btn.dataset.path;
   if (!folderPath) return;
 
-  selectBtn.disabled = true;
-  selectBtn.textContent = 'Scanning...';
+  btn.disabled = true;
+  const btnSpan = btn.querySelector('span');
+  if (btnSpan) btnSpan.textContent = 'Scanning...';
 
   try {
-    const response = await fetch('/api/upload/scan-folder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ folder_path: folderPath }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to scan folder');
-    }
+    const data = await apiPost('/api/upload/scan-folder', { folder_path: folderPath });
 
     if (data.total_count === 0) {
       showNotification('No MCAP files found in this folder', 'error');
@@ -296,63 +254,68 @@ async function selectCurrentFolder() {
     state.selectedFolderPath = folderPath;
     localStorage.setItem('lastUploadFolder', folderPath);
 
-    closeFolderBrowser();
-
-    const prefilterResponse = await fetch('/api/upload/bulk-analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        file_paths: data.files.map((/** @type {{ path: string }} */ f) => f.path),
-        pre_filter_only: true,
-      }),
+    const prefilterData = await apiPost('/api/upload/bulk-analyze', {
+      file_paths: data.files.map((/** @type {{ path: string }} */ f) => f.path),
+      pre_filter_only: true,
     });
-
-    const prefilterData = await prefilterResponse.json();
 
     showScanResults(data, prefilterData.pre_filter_stats || {});
   } catch (error) {
     showNotification(/** @type {Error} */ (error).message, 'error');
   } finally {
-    selectBtn.disabled = false;
-    selectBtn.textContent = 'Select This Folder';
+    btn.disabled = false;
+    const resetSpan = btn.querySelector('span');
+    if (resetSpan) resetSpan.textContent = 'Upload This Folder';
   }
 }
 
 /**
- * Show scan results UI.
+ * Show scan results UI with sortable review table.
  * @param {any} scanData
  * @param {any} prefilterStats
  */
 function showScanResults(scanData, prefilterStats) {
-  const scanSection = document.getElementById('scan-results-section');
-  const dropZone = document.getElementById('drop-zone');
-
   showUploadSteps(2);
 
-  const selectedFolderPath = document.getElementById('selected-folder-path');
-  if (selectedFolderPath) selectedFolderPath.textContent = scanData.folder_path;
+  // Store folder path for relative path computation
+  state.scanFolderPath = scanData.folder_path;
+  state.scanTotalSize = scanData.total_size || 0;
 
-  const scanTotal = document.getElementById('scan-total');
-  if (scanTotal) scanTotal.textContent = String(scanData.total_count);
+  setText('selected-folder-path', scanData.folder_path);
+  setText('scan-total', scanData.total_count);
+  setText('scan-total-volume', formatBytes(state.scanTotalSize));
+  setText('scan-already-uploaded', prefilterStats.cache_skipped || 0);
 
-  const scanToUpload = document.getElementById('scan-to-upload');
-  if (scanToUpload) {
-    scanToUpload.textContent = String(prefilterStats.to_analyze || scanData.total_count);
-  }
-
-  const scanAlreadyUploaded = document.getElementById('scan-already-uploaded');
-  if (scanAlreadyUploaded) {
-    scanAlreadyUploaded.textContent = String(prefilterStats.cache_skipped || 0);
-  }
-
+  // Merge scan data files with prefilter statuses
   const fileStatuses = prefilterStats.file_statuses || [];
-  state.scanFilePaths = fileStatuses
+  /** @type {Map<string, any>} */
+  const prefilterMap = new Map();
+  for (const fs of fileStatuses) {
+    prefilterMap.set(fs.path, fs);
+  }
+
+  /** @type {Array<any>} */
+  const mergedStatuses = [];
+  for (const scanFile of scanData.files) {
+    const pf = prefilterMap.get(scanFile.path);
+    mergedStatuses.push({
+      path: scanFile.path,
+      filename: scanFile.filename,
+      size: scanFile.size,
+      mtime: scanFile.mtime || 0,
+      relative_path: scanFile.relative_path || scanFile.filename,
+      already_uploaded: pf ? pf.already_uploaded : false,
+    });
+  }
+
+  state.scanFilePaths = mergedStatuses
     .filter((/** @type {any} */ f) => !f.already_uploaded)
     .map((/** @type {any} */ f) => f.path);
 
-  state.scanFileStatuses = fileStatuses;
+  state.scanFileStatuses = mergedStatuses;
+  state.reviewSortConfig = { column: 'filename', ascending: true };
 
-  renderScanFileList(fileStatuses);
+  renderReviewTable(mergedStatuses);
 
   const hideUploadedCheckbox = /** @type {HTMLInputElement | null} */ (
     document.getElementById('scan-hide-uploaded')
@@ -362,58 +325,96 @@ function showScanResults(scanData, prefilterStats) {
     hideUploadedCheckbox.onchange = () => applyScanFileFilter();
   }
 
-  const startBtn = /** @type {HTMLButtonElement | null} */ (
-    document.getElementById('start-upload-btn')
+  const continueBtn = /** @type {HTMLButtonElement | null} */ (
+    document.getElementById('continue-upload-btn')
   );
-  if (startBtn) {
-    startBtn.disabled = (prefilterStats.to_analyze || scanData.total_count) === 0;
+  if (continueBtn) {
+    continueBtn.disabled = state.scanFileStatuses.length === 0;
   }
 
-  if (dropZone) dropZone.classList.add('hidden');
-  if (scanSection) scanSection.classList.remove('hidden');
+  hideEl('folder-browser-panel');
+  showEl('scan-results-section');
 }
 
 /**
+ * Render the sortable review table body.
  * @param {any[]} fileStatuses
  */
-function renderScanFileList(fileStatuses) {
-  const fileList = document.getElementById('scan-file-list');
-  if (!fileList) return;
+function renderReviewTable(fileStatuses) {
+  const tbody = document.getElementById('scan-file-list');
+  if (!tbody) return;
+
+  const { column, ascending } = state.reviewSortConfig;
 
   const sorted = [...fileStatuses].sort((a, b) => {
-    if (a.already_uploaded === b.already_uploaded) {
-      return a.filename.localeCompare(b.filename);
+    let cmp = 0;
+    if (column === 'filename') {
+      cmp = a.filename.localeCompare(b.filename);
+    } else if (column === 'path') {
+      const aDir = getDirectoryPart(a.relative_path);
+      const bDir = getDirectoryPart(b.relative_path);
+      cmp = aDir.localeCompare(bDir);
+    } else if (column === 'mtime') {
+      cmp = (a.mtime || 0) - (b.mtime || 0);
+    } else if (column === 'size') {
+      cmp = a.size - b.size;
+    } else if (column === 'status') {
+      cmp = Number(a.already_uploaded) - Number(b.already_uploaded);
     }
-    return a.already_uploaded ? 1 : -1;
+    return ascending ? cmp : -cmp;
   });
 
-  fileList.innerHTML = sorted
-    .map(
-      (file) => `
-        <div class="px-6 py-3 flex items-center justify-between ${file.already_uploaded ? 'bg-yellow-50' : ''}"
-             data-already-uploaded="${file.already_uploaded}">
-            <div class="flex items-center min-w-0">
-                <svg class="h-5 w-5 ${file.already_uploaded ? 'text-yellow-500' : 'text-green-500'} mr-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    ${
-                      file.already_uploaded
-                        ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />'
-                        : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />'
-                    }
-                </svg>
-                <span class="text-sm ${file.already_uploaded ? 'text-gray-500' : 'text-gray-900'} truncate" title="${file.filename}">
+  tbody.innerHTML = sorted
+    .map((file) => {
+      const dirPath = getDirectoryPart(file.relative_path);
+
+      return `
+        <tr class="${file.already_uploaded ? 'bg-yellow-50' : ''}"
+            data-already-uploaded="${file.already_uploaded}">
+            <td class="px-4 py-3">
+                <span class="text-sm ${file.already_uploaded ? 'text-gray-500' : 'text-gray-900'} truncate block" title="${file.filename}">
                     ${file.filename}
                 </span>
-            </div>
-            <div class="flex items-center space-x-4 flex-shrink-0">
-                <span class="text-xs text-gray-500">${formatBytes(file.size)}</span>
+            </td>
+            <td class="px-4 py-3">
+                <span class="text-sm text-gray-500 truncate block" title="${dirPath}">${dirPath || '.'}</span>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatMtime(file.mtime)}</td>
+            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatBytes(file.size)}</td>
+            <td class="px-4 py-3 whitespace-nowrap">
                 <span class="px-2 py-1 text-xs rounded-full ${file.already_uploaded ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}">
                     ${file.already_uploaded ? 'Uploaded' : 'To Upload'}
                 </span>
-            </div>
-        </div>
-    `,
-    )
+            </td>
+        </tr>
+    `;
+    })
     .join('');
+
+  // Update sort indicators
+  updateSortIndicators('[data-sort]', '.sort-indicator', 'sort', column, ascending);
+
+  // Re-apply filter
+  applyScanFileFilter();
+}
+
+/**
+ * Get the directory part of a relative path (everything before the filename).
+ * @param {string} relativePath
+ * @returns {string}
+ */
+function getDirectoryPart(relativePath) {
+  const lastSlash = relativePath.lastIndexOf('/');
+  return lastSlash >= 0 ? relativePath.substring(0, lastSlash) : '';
+}
+
+/**
+ * Sort the review table by column.
+ * @param {string} column
+ */
+function sortReviewTable(column) {
+  toggleSort(state.reviewSortConfig, column);
+  renderReviewTable(state.scanFileStatuses);
 }
 
 function applyScanFileFilter() {
@@ -421,66 +422,203 @@ function applyScanFileFilter() {
     document.getElementById('scan-hide-uploaded')
   );
   const hideUploaded = hideUploadedEl?.checked || false;
-  const fileList = document.getElementById('scan-file-list');
-  if (!fileList) return;
+  const tbody = document.getElementById('scan-file-list');
+  if (!tbody) return;
 
-  const items = fileList.querySelectorAll('[data-already-uploaded]');
-  for (const item of items) {
-    if (hideUploaded && /** @type {HTMLElement} */ (item).dataset.alreadyUploaded === 'true') {
-      item.classList.add('hidden');
+  const rows = tbody.querySelectorAll('[data-already-uploaded]');
+  for (const row of rows) {
+    if (hideUploaded && /** @type {HTMLElement} */ (row).dataset.alreadyUploaded === 'true') {
+      row.classList.add('hidden');
     } else {
-      item.classList.remove('hidden');
+      row.classList.remove('hidden');
     }
   }
 }
 
 /**
- * Start direct upload from scanned folder.
+ * Show the confirm upload modal.
  */
-export async function startDirectUpload() {
-  if (!state.scanFilePaths || state.scanFilePaths.length === 0) {
+export function showConfirmModal() {
+  if (!state.scanFileStatuses || state.scanFileStatuses.length === 0) {
     showNotification('No files to upload', 'error');
     return;
   }
 
-  const startBtn = /** @type {HTMLButtonElement | null} */ (
-    document.getElementById('start-upload-btn')
+  // Calculate size of non-uploaded files (default view)
+  updateConfirmModalCounts(false);
+
+  // Wire up force-reupload checkbox to update counts dynamically
+  const checkbox = /** @type {HTMLInputElement | null} */ (
+    document.getElementById('force-reupload-checkbox')
   );
-  if (startBtn) {
-    startBtn.disabled = true;
-    startBtn.textContent = 'Validating...';
+  if (checkbox) {
+    checkbox.checked = false;
+    checkbox.onchange = () => updateConfirmModalCounts(checkbox.checked);
   }
+
+  showEl('confirm-skip-note');
+  showEl('confirm-upload-modal');
+}
+
+/**
+ * Update confirm modal file count/size based on force-reupload state.
+ * @param {boolean} forceReupload
+ */
+function updateConfirmModalCounts(forceReupload) {
+  let uploadSize = 0;
+  let uploadCount = 0;
+  for (const file of state.scanFileStatuses) {
+    if (forceReupload || !file.already_uploaded) {
+      uploadSize += file.size;
+      uploadCount++;
+    }
+  }
+
+  setText('confirm-file-count', uploadCount);
+  setText('confirm-total-size', formatBytes(uploadSize));
+
+  if (forceReupload) {
+    hideEl('confirm-skip-note');
+  } else {
+    showEl('confirm-skip-note');
+  }
+}
+
+/**
+ * Start the combined validate + upload flow.
+ */
+export async function startCombinedUpload() {
+  // Close confirm modal
+  hideEl('confirm-upload-modal');
+
+  // Check force-reupload state
+  const forceCheckbox = /** @type {HTMLInputElement | null} */ (
+    document.getElementById('force-reupload-checkbox')
+  );
+  const forceReupload = forceCheckbox?.checked || false;
+
+  // Determine which file paths to send
+  const filePaths = forceReupload
+    ? state.scanFileStatuses.map((/** @type {any} */ f) => f.path)
+    : state.scanFilePaths;
+
+  if (!filePaths || filePaths.length === 0) {
+    showNotification('No files to upload', 'error');
+    return;
+  }
+
+  setUploadStep(3);
+
+  hideEl('scan-results-section');
+  showEl('upload-section');
+
+  // Set phase label
+  setText('upload-phase-label', 'Validating files...');
+
+  // Initialize file list with pending status
+  initUploadFileList(filePaths);
 
   try {
-    const response = await fetch('/api/upload/bulk-analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        file_paths: state.scanFilePaths,
-        auto_upload: false,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok && response.status !== 202) {
-      throw new Error(data.error || 'Failed to start upload');
+    /** @type {Record<string, any>} */
+    const requestBody = {
+      file_paths: filePaths,
+      auto_upload: true,
+    };
+    if (forceReupload) {
+      requestBody.skip_duplicates = false;
     }
+
+    const data = await apiPost('/api/upload/bulk-analyze', requestBody);
 
     state.currentJobId = data.job_id;
+    setText('files-total', data.total_files);
 
-    setUploadStep(3);
-
-    document.getElementById('scan-results-section')?.classList.add('hidden');
-    document.getElementById('analysis-section')?.classList.remove('hidden');
-
-    initializeAnalysisTableFromPaths(state.scanFilePaths);
-    connectAnalysisProgressStream(data.job_id);
+    connectCombinedProgressStream(data.job_id);
   } catch (error) {
     showNotification(/** @type {Error} */ (error).message, 'error');
-    if (startBtn) {
-      startBtn.disabled = false;
-      startBtn.textContent = 'Validate Files';
-    }
   }
+}
+
+/**
+ * Render the sortable file table in the folder browser.
+ */
+function renderBrowserFileTable() {
+  const tbody = document.getElementById('file-table-body');
+  if (!tbody || !state.browserFiles) return;
+
+  const { column, ascending } = state.browserFileSortConfig;
+
+  const sorted = [...state.browserFiles].sort((a, b) => {
+    let cmp = 0;
+    if (column === 'name') {
+      cmp = a.name.localeCompare(b.name);
+    } else if (column === 'mtime') {
+      cmp = (a.mtime || 0) - (b.mtime || 0);
+    } else if (column === 'size') {
+      cmp = a.size - b.size;
+    }
+    return ascending ? cmp : -cmp;
+  });
+
+  tbody.innerHTML = sorted
+    .map(
+      (/** @type {{ name: string, size: number, mtime: number }} */ file) => `
+          <tr class="hover:bg-gray-50">
+            <td class="px-6 py-2">
+              <div class="flex items-center">
+                ${fileIcon('h-4 w-4 text-gray-400 mr-2 flex-shrink-0')}
+                <span class="text-sm text-gray-600 truncate">${file.name}</span>
+              </div>
+            </td>
+            <td class="px-4 py-2 text-sm text-gray-500 whitespace-nowrap">${formatMtime(file.mtime)}</td>
+            <td class="px-4 py-2 text-sm text-gray-500 text-right whitespace-nowrap">${formatBytes(file.size)}</td>
+          </tr>
+        `,
+    )
+    .join('');
+
+  // Update sort indicators
+  updateSortIndicators('[data-file-sort]', '.file-sort-indicator', 'fileSort', column, ascending);
+}
+
+/**
+ * Sort the browser file table by column.
+ * @param {string} column
+ */
+function sortBrowserFileTable(column) {
+  if (!state.browserFileSortConfig) {
+    state.browserFileSortConfig = { column, ascending: true };
+  } else {
+    toggleSort(state.browserFileSortConfig, column);
+  }
+  renderBrowserFileTable();
+}
+
+/**
+ * Initialize the upload file list with queued status.
+ * @param {string[]} filePaths
+ */
+function initUploadFileList(filePaths) {
+  const listEl = document.getElementById('upload-file-list');
+  if (!listEl) return;
+
+  const total = filePaths.length;
+  listEl.innerHTML = filePaths
+    .map((path, index) => {
+      const filename = path.split('/').pop() || path;
+      return `
+        <div class="px-6 py-3 flex items-center justify-between" data-upload-file="${filename}">
+            <div class="flex items-center space-x-3">
+                <div class="h-5 w-5 text-gray-400">
+                    <svg class="h-5 w-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <span class="text-sm text-gray-900">${filename}</span>
+            </div>
+            <span data-queue-label class="text-xs text-gray-500">Queued (${index + 1} of ${total})</span>
+        </div>
+      `;
+    })
+    .join('');
 }
