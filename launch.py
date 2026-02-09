@@ -39,9 +39,15 @@ def open_browser(url: str) -> None:
     import shutil
 
     if shutil.which("firefox"):
-        subprocess.Popen(["firefox", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            ["firefox", url],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+        )
     elif shutil.which("xdg-open"):
-        subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            ["xdg-open", url],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+        )
     else:
         log(f"Could not find a browser. Open {url} manually.")
 
@@ -98,6 +104,7 @@ def main() -> None:
     if port_in_use(PORT):
         log(f"Port {PORT} is already in use — opening browser to existing instance.")
         open_browser(BROWSER_URL)
+        time.sleep(2)
         sys.exit(0)
 
     # ── Register signal handlers ─────────────────────────────
