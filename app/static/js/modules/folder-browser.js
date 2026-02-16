@@ -33,13 +33,13 @@ export async function initFolderBrowser() {
   document.getElementById('folder-quick-links')?.addEventListener('click', handleFolderNavClick);
   document.getElementById('folder-breadcrumb')?.addEventListener('click', handleFolderNavClick);
 
-  // Sort header click handler (Review table)
+  // Click handler for Review table (folder expand/collapse)
   const scanSection = document.getElementById('scan-results-section');
   if (scanSection) {
     scanSection.addEventListener('click', (e) => {
-      const th = /** @type {HTMLElement} */ (e.target).closest('[data-sort]');
-      if (th) {
-        sortReviewTable(/** @type {HTMLElement} */ (th).dataset.sort || 'filename');
+      const folderHeader = /** @type {HTMLElement} */ (e.target).closest('[data-folder-header]');
+      if (folderHeader) {
+        toggleFolderExpand(/** @type {HTMLTableRowElement} */ (folderHeader));
       }
     });
   }
@@ -264,8 +264,8 @@ function selectCurrentFolder() {
   const tbody = document.getElementById('scan-file-list');
   if (tbody) tbody.innerHTML = '';
 
-  for (const folder of state.browserScanResults) {
-    appendFolderToReviewTable(folder);
+  for (let i = 0; i < state.browserScanResults.length; i++) {
+    appendFolderToReviewTable(state.browserScanResults[i], i);
   }
 
   // Hide scan progress (scan already done), enable continue button
@@ -614,48 +614,83 @@ function applyBrowserHideUploaded(hide) {
 }
 
 /**
- * Append a scanned folder's results to the review table incrementally.
+ * Append a scanned folder as a collapsed summary row in the review table.
+ * File rows are only rendered on-demand when the folder header is expanded.
  * @param {{ relative_path: string, files: any[], total_files: number, already_uploaded: number, all_uploaded: boolean, error: string | null }} folderData
+ * @param {number} folderIndex - Index into state.browserScanResults
  */
-function appendFolderToReviewTable(folderData) {
+function appendFolderToReviewTable(folderData, folderIndex) {
   const tbody = document.getElementById('scan-file-list');
   if (!tbody) return;
 
   const folderLabel = folderData.relative_path === '.' ? '(root)' : folderData.relative_path;
-  const uploadedSummary = `${folderData.already_uploaded}/${folderData.total_files} uploaded`;
+  const toUpload = folderData.total_files - folderData.already_uploaded;
 
-  // Build folder header row
+  // Collapsed folder header only — no file rows (rendered on expand)
   const headerHtml = `
-    <tr class="bg-gray-100 ${folderData.all_uploaded ? 'folder-all-uploaded' : ''}"
+    <tr class="bg-gray-100 cursor-pointer hover:bg-gray-200 select-none ${folderData.all_uploaded ? 'folder-all-uploaded' : ''}"
         data-folder-header
-        data-all-uploaded="${folderData.all_uploaded}">
+        data-folder-idx="${folderIndex}"
+        data-all-uploaded="${folderData.all_uploaded}"
+        data-expanded="false">
       <td colspan="5" class="px-4 py-2">
         <div class="flex items-center justify-between">
           <div class="flex items-center">
+            <svg class="folder-chevron h-4 w-4 text-gray-400 mr-2 transition-transform flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
             ${folderIcon('h-4 w-4 text-nlr-yellow mr-2')}
             <span class="text-sm font-medium text-gray-700">${folderLabel}</span>
             ${folderData.all_uploaded ? checkmarkIcon() : ''}
           </div>
-          <div class="flex items-center space-x-2">
-            <span class="text-xs text-gray-500">${uploadedSummary}</span>
-            ${folderData.error ? `<span class="text-xs text-red-600 bg-red-100 px-2 py-0.5 rounded-full">Error: ${folderData.error}</span>` : ''}
+          <div class="flex items-center space-x-3">
+            <span class="text-xs text-gray-600">${folderData.total_files} files</span>
+            ${toUpload > 0 ? `<span class="text-xs font-medium text-green-700">${toUpload} to upload</span>` : ''}
+            ${folderData.already_uploaded > 0 ? `<span class="text-xs text-gray-500">${folderData.already_uploaded} uploaded</span>` : ''}
+            ${folderData.error ? `<span class="text-xs text-red-600 bg-red-100 px-2 py-0.5 rounded-full">Error</span>` : ''}
           </div>
         </div>
       </td>
     </tr>
   `;
 
-  // Build file rows under this folder
-  let fileRowsHtml = '';
-  for (const file of folderData.files) {
-    const dirPath = getDirectoryPart(file.relative_path);
-    fileRowsHtml += `
-      <tr class="${file.already_uploaded ? 'bg-yellow-50' : ''}"
-          data-already-uploaded="${file.already_uploaded}">
+  tbody.insertAdjacentHTML('beforeend', headerHtml);
+  applyScanFileFilter();
+}
+
+/**
+ * Toggle expand/collapse of a folder in the review table.
+ * @param {HTMLTableRowElement} headerRow
+ */
+function toggleFolderExpand(headerRow) {
+  const idx = Number.parseInt(headerRow.dataset.folderIdx || '0', 10);
+  const folderData = state.browserScanResults[idx];
+  if (!folderData) return;
+
+  const isExpanded = headerRow.dataset.expanded === 'true';
+  const chevron = headerRow.querySelector('.folder-chevron');
+
+  if (isExpanded) {
+    // Collapse: remove file rows after this header until next header
+    let next = headerRow.nextElementSibling;
+    while (next && !next.hasAttribute('data-folder-header')) {
+      const toRemove = next;
+      next = next.nextElementSibling;
+      toRemove.remove();
+    }
+    headerRow.dataset.expanded = 'false';
+    if (chevron) chevron.classList.remove('rotate-90');
+  } else {
+    // Expand: render file rows after this header using a DocumentFragment
+    const fragment = document.createDocumentFragment();
+    for (const file of folderData.files) {
+      const tr = document.createElement('tr');
+      tr.className = file.already_uploaded ? 'bg-yellow-50' : '';
+      tr.dataset.alreadyUploaded = String(file.already_uploaded);
+      const dirPath = getDirectoryPart(file.relative_path);
+      tr.innerHTML = `
         <td class="pl-8 pr-4 py-3">
-          <span class="text-sm ${file.already_uploaded ? 'text-gray-500' : 'text-gray-900'} truncate block" title="${file.filename}">
-            ${file.filename}
-          </span>
+          <span class="text-sm ${file.already_uploaded ? 'text-gray-500' : 'text-gray-900'} truncate block" title="${file.filename}">${file.filename}</span>
         </td>
         <td class="px-4 py-3">
           <span class="text-sm text-gray-500 truncate block" title="${dirPath}">${dirPath || '.'}</span>
@@ -667,76 +702,13 @@ function appendFolderToReviewTable(folderData) {
             ${file.already_uploaded ? 'Uploaded' : 'To Upload'}
           </span>
         </td>
-      </tr>
-    `;
-  }
-
-  tbody.insertAdjacentHTML('beforeend', headerHtml + fileRowsHtml);
-
-  // Apply current filter
-  applyScanFileFilter();
-}
-
-/**
- * Render the sortable review table body (flat view, used for re-sorting).
- * @param {any[]} fileStatuses
- */
-function renderReviewTable(fileStatuses) {
-  const tbody = document.getElementById('scan-file-list');
-  if (!tbody) return;
-
-  const { column, ascending } = state.reviewSortConfig;
-
-  const sorted = [...fileStatuses].sort((a, b) => {
-    let cmp = 0;
-    if (column === 'filename') {
-      cmp = a.filename.localeCompare(b.filename);
-    } else if (column === 'path') {
-      const aDir = getDirectoryPart(a.relative_path);
-      const bDir = getDirectoryPart(b.relative_path);
-      cmp = aDir.localeCompare(bDir);
-    } else if (column === 'mtime') {
-      cmp = (a.mtime || 0) - (b.mtime || 0);
-    } else if (column === 'size') {
-      cmp = a.size - b.size;
-    } else if (column === 'status') {
-      cmp = Number(a.already_uploaded) - Number(b.already_uploaded);
+      `;
+      fragment.appendChild(tr);
     }
-    return ascending ? cmp : -cmp;
-  });
-
-  tbody.innerHTML = sorted
-    .map((file) => {
-      const dirPath = getDirectoryPart(file.relative_path);
-
-      return `
-        <tr class="${file.already_uploaded ? 'bg-yellow-50' : ''}"
-            data-already-uploaded="${file.already_uploaded}">
-            <td class="px-4 py-3">
-                <span class="text-sm ${file.already_uploaded ? 'text-gray-500' : 'text-gray-900'} truncate block" title="${file.filename}">
-                    ${file.filename}
-                </span>
-            </td>
-            <td class="px-4 py-3">
-                <span class="text-sm text-gray-500 truncate block" title="${dirPath}">${dirPath || '.'}</span>
-            </td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatMtime(file.mtime)}</td>
-            <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatBytes(file.size)}</td>
-            <td class="px-4 py-3 whitespace-nowrap">
-                <span class="px-2 py-1 text-xs rounded-full ${file.already_uploaded ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}">
-                    ${file.already_uploaded ? 'Uploaded' : 'To Upload'}
-                </span>
-            </td>
-        </tr>
-    `;
-    })
-    .join('');
-
-  // Update sort indicators
-  updateSortIndicators('[data-sort]', '.sort-indicator', 'sort', column, ascending);
-
-  // Re-apply filter
-  applyScanFileFilter();
+    headerRow.after(fragment);
+    headerRow.dataset.expanded = 'true';
+    if (chevron) chevron.classList.add('rotate-90');
+  }
 }
 
 /**
@@ -747,15 +719,6 @@ function renderReviewTable(fileStatuses) {
 function getDirectoryPart(relativePath) {
   const lastSlash = relativePath.lastIndexOf('/');
   return lastSlash >= 0 ? relativePath.substring(0, lastSlash) : '';
-}
-
-/**
- * Sort the review table by column.
- * @param {string} column
- */
-function sortReviewTable(column) {
-  toggleSort(state.reviewSortConfig, column);
-  renderReviewTable(state.scanFileStatuses);
 }
 
 function applyScanFileFilter() {
@@ -974,30 +937,16 @@ function sortBrowserFileTable(column) {
 }
 
 /**
- * Initialize the upload file list with queued status.
+ * Initialize the upload view for a new job.
+ * Instead of creating 20K+ DOM rows, initialize status counters and
+ * clear the active upload area. Active files render on-demand.
  * @param {string[]} filePaths
  */
 function initUploadFileList(filePaths) {
-  const listEl = document.getElementById('upload-file-list');
-  if (!listEl) return;
+  const activeList = document.getElementById('upload-active-list');
+  if (activeList) activeList.innerHTML = '';
 
-  const total = filePaths.length;
-  listEl.innerHTML = filePaths
-    .map((path, index) => {
-      const filename = path.split('/').pop() || path;
-      return `
-        <div class="px-6 py-3 flex items-center justify-between" data-upload-file="${filename}">
-            <div class="flex items-center space-x-3">
-                <div class="h-5 w-5 text-gray-400">
-                    <svg class="h-5 w-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                </div>
-                <span class="text-sm text-gray-900">${filename}</span>
-            </div>
-            <span data-queue-label class="text-xs text-gray-500">Queued (${index + 1} of ${total})</span>
-        </div>
-      `;
-    })
-    .join('');
+  // Initialize counters (all files start as "pending")
+  initStatusCounts(filePaths.length);
+  setText('files-total', String(filePaths.length));
 }
