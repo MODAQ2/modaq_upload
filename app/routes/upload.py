@@ -204,8 +204,11 @@ def get_progress(job_id: str) -> Response:
         try:
             # Send initial state
             job = manager.get_job(job_id)
+            scan_job = manager.get_scan_job(job_id) if not job else None
             if job:
                 yield f"data: {json.dumps(job.to_dict())}\n\n"
+            elif scan_job:
+                yield f"data: {json.dumps({'type': 'scan_initial', 'status': scan_job.status})}\n\n"
 
             # Stream updates
             while True:
@@ -214,17 +217,58 @@ def get_progress(job_id: str) -> Response:
                     data = queue.popleft()
                     yield f"data: {json.dumps(data)}\n\n"
 
-                    # Check if job is complete
+                    # Check if job is complete (upload jobs)
                     if data.get("status") in ("completed", "failed", "cancelled"):
-                        return
+                        # For scan events, check the type field
+                        if data.get("type") == "scan_complete":
+                            return
+                        # For upload jobs (no type field)
+                        if not data.get("type"):
+                            return
 
                 # Small delay to prevent busy waiting
                 time.sleep(0.1)
 
-                # Check if job still exists
+                # Check if job still exists (upload or scan)
                 job = manager.get_job(job_id)
-                if not job:
+                scan_job = manager.get_scan_job(job_id) if not job else None
+                if not job and not scan_job:
                     yield 'data: {"error": "Job not found"}\n\n'
+                    return
+
+                # Check if scan job reached terminal state before client connected
+                # (race condition: fast scans finish before EventSource opens,
+                # so events were sent to empty queues and dropped)
+                if scan_job and scan_job.status in (
+                    "completed",
+                    "failed",
+                    "cancelled",
+                ):
+                    # Replay missed folder results so frontend gets the data
+                    for folder_data in scan_job.scanned_folders:
+                        replay_event = {
+                            "type": "scan_folder_complete",
+                            "folder": folder_data,
+                            "folders_scanned": scan_job.folders_scanned,
+                            "folders_total": scan_job.folders_total,
+                            "running_totals": {
+                                "total_files_found": scan_job.total_files_found,
+                                "total_already_uploaded": scan_job.total_already_uploaded,
+                                "total_size": scan_job.total_size,
+                            },
+                        }
+                        yield f"data: {json.dumps(replay_event)}\n\n"
+
+                    terminal_data = {
+                        "type": "scan_complete",
+                        "status": scan_job.status,
+                        "folders_scanned": scan_job.folders_scanned,
+                        "folders_total": scan_job.folders_total,
+                        "total_files_found": scan_job.total_files_found,
+                        "total_already_uploaded": scan_job.total_already_uploaded,
+                        "total_size": scan_job.total_size,
+                    }
+                    yield f"data: {json.dumps(terminal_data)}\n\n"
                     return
 
         finally:
@@ -313,6 +357,8 @@ def cancel_upload(job_id: str) -> tuple[Response, int]:
                 "job": job.to_dict() if job else None,
             }
         ), 200
+    elif manager.cancel_scan_job(job_id):
+        return jsonify({"success": True, "job_id": job_id}), 200
     else:
         return jsonify({"error": "Job not found"}), 404
 
@@ -372,6 +418,60 @@ def scan_folder() -> tuple[Response, int]:
             "total_size": total_size,
         }
     ), 200
+
+
+@upload_bp.route("/scan-folder-async", methods=["POST"])
+def scan_folder_async() -> tuple[Response, int]:
+    """Start an async folder scan that streams results via SSE.
+
+    Request body:
+        folder_path: Path to the folder to scan
+
+    Returns:
+        JSON response with job_id (202 Accepted)
+    """
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    data = request.get_json()
+    if not data or "folder_path" not in data:
+        return jsonify({"error": "folder_path is required"}), 400
+
+    folder_path = Path(data["folder_path"])
+
+    if not folder_path.exists():
+        return jsonify({"error": f"Folder not found: {folder_path}"}), 404
+
+    if not folder_path.is_dir():
+        return jsonify({"error": f"Path is not a directory: {folder_path}"}), 400
+
+    cache_only: bool = data.get("cache_only", False)
+
+    settings = get_settings()
+    manager = get_upload_manager()
+
+    scan_job = manager.create_scan_job(str(folder_path.absolute()))
+
+    def scan_progress_callback(job_id: str, event_data: dict[str, Any]) -> None:
+        send_sse_event(job_id, event_data)
+
+    def run_scan() -> None:
+        manager.scan_folder_async(
+            scan_job.job_id,
+            settings.s3_bucket,
+            settings.aws_profile,
+            settings.aws_region,
+            progress_callback=scan_progress_callback,
+            cache_only=cache_only,
+        )
+
+    thread = threading.Thread(target=run_scan, daemon=True)
+    thread.start()
+
+    return jsonify({
+        "job_id": scan_job.job_id,
+        "status": "scanning",
+    }), 202
 
 
 @upload_bp.route("/bulk-analyze", methods=["POST"])

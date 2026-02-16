@@ -240,11 +240,43 @@ class UploadJob:
         }
 
 
+@dataclass
+class ScannedFolder:
+    """Results for a single scanned subfolder."""
+
+    folder_path: str
+    relative_path: str
+    files: list[dict[str, Any]]
+    total_files: int = 0
+    already_uploaded: int = 0
+    all_uploaded: bool = False
+    error: str | None = None
+
+
+@dataclass
+class ScanJob:
+    """Tracks an async folder scan job."""
+
+    job_id: str
+    root_folder: str
+    status: str = "scanning"  # scanning | completed | failed | cancelled
+    cancelled: bool = False
+    folders_scanned: int = 0
+    folders_total: int = 0
+    total_files_found: int = 0
+    total_already_uploaded: int = 0
+    total_size: int = 0
+    scanned_folders: list[dict[str, Any]] = field(default_factory=list)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+
 class UploadManager:
     """Manages upload jobs and their execution."""
 
     def __init__(self, max_workers: int = 4) -> None:
         self.jobs: dict[str, UploadJob] = {}
+        self.scan_jobs: dict[str, ScanJob] = {}
         self.max_workers = max_workers
         self._lock = threading.Lock()
 
@@ -969,6 +1001,7 @@ class UploadManager:
         s3_bucket: str,
         aws_profile: str = "default",
         aws_region: str = "us-west-2",
+        cache_only: bool = False,
     ) -> tuple[list[str], dict[str, Any]]:
         """Pre-filter files using cache and filename timestamp extraction.
 
@@ -1062,36 +1095,263 @@ class UploadManager:
 
         # Batch S3 HEAD checks for cache misses
         if cache_miss_s3_paths:
-            try:
-                s3_client = s3_service.create_s3_client(aws_profile, aws_region)
-
-                def check_s3(s3_path: str) -> bool:
-                    return s3_service.check_file_exists(s3_client, s3_bucket, s3_path)
-
-                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                    results = list(executor.map(check_s3, cache_miss_s3_paths))
-
-                for idx, s3_path, exists in zip(
-                    cache_miss_indices, cache_miss_s3_paths, results, strict=True
-                ):
-                    # Update cache with result
-                    fs = file_statuses[idx]
-                    cache.update_cache(
-                        s3_bucket, s3_path, exists, fs["filename"], fs["size"]
-                    )
-                    if exists:
-                        stats["s3_hits"] += 1
-                        fs["already_uploaded"] = True
-                    else:
-                        files_to_analyze.append(fs["path"])
-            except Exception:
-                # S3 check failed — fall back to full analysis for cache misses
+            if cache_only:
+                # In cache_only mode, skip S3 HEAD checks — treat misses as not-uploaded
                 for idx in cache_miss_indices:
                     files_to_analyze.append(file_statuses[idx]["path"])
+            else:
+                try:
+                    s3_client = s3_service.create_s3_client(aws_profile, aws_region)
+
+                    def check_s3(s3_path: str) -> bool:
+                        return s3_service.check_file_exists(s3_client, s3_bucket, s3_path)
+
+                    with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                        results = list(executor.map(check_s3, cache_miss_s3_paths))
+
+                    for idx, s3_path, exists in zip(
+                        cache_miss_indices, cache_miss_s3_paths, results, strict=True
+                    ):
+                        # Update cache with result
+                        fs = file_statuses[idx]
+                        cache.update_cache(
+                            s3_bucket, s3_path, exists, fs["filename"], fs["size"]
+                        )
+                        if exists:
+                            stats["s3_hits"] += 1
+                            fs["already_uploaded"] = True
+                        else:
+                            files_to_analyze.append(fs["path"])
+                except Exception:
+                    # S3 check failed — fall back to full analysis for cache misses
+                    for idx in cache_miss_indices:
+                        files_to_analyze.append(file_statuses[idx]["path"])
 
         stats["to_analyze"] = len(files_to_analyze)
         stats["file_statuses"] = file_statuses
         return files_to_analyze, stats
+
+    def create_scan_job(self, folder_path: str) -> ScanJob:
+        """Create a new scan job for a folder.
+
+        Args:
+            folder_path: Root folder to scan
+
+        Returns:
+            The created ScanJob
+        """
+        job_id = str(uuid.uuid4())
+        scan_job = ScanJob(job_id=job_id, root_folder=folder_path)
+        with self._lock:
+            self.scan_jobs[job_id] = scan_job
+        return scan_job
+
+    def get_scan_job(self, job_id: str) -> ScanJob | None:
+        """Get a scan job by ID."""
+        return self.scan_jobs.get(job_id)
+
+    def cancel_scan_job(self, job_id: str) -> bool:
+        """Cancel a scan job.
+
+        Args:
+            job_id: The scan job ID to cancel
+
+        Returns:
+            True if job was found and cancelled
+        """
+        scan_job = self.get_scan_job(job_id)
+        if not scan_job:
+            return False
+        scan_job.cancelled = True
+        scan_job.status = "cancelled"
+        return True
+
+    def scan_folder_async(
+        self,
+        job_id: str,
+        s3_bucket: str,
+        aws_profile: str,
+        aws_region: str,
+        progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        cache_only: bool = False,
+    ) -> None:
+        """Scan a folder asynchronously, processing subfolder by subfolder.
+
+        Args:
+            job_id: The scan job ID
+            s3_bucket: S3 bucket for duplicate checking
+            aws_profile: AWS profile for S3 access
+            aws_region: AWS region for S3 access
+            progress_callback: Called with (job_id, event_data) for each event
+        """
+        scan_job = self.get_scan_job(job_id)
+        if not scan_job:
+            return
+
+        root = Path(scan_job.root_folder)
+        log = get_log_service()
+
+        try:
+            # Phase 1: Enumerate subfolders containing .mcap files (fast, metadata only)
+            folder_map: dict[str, list[Path]] = {}
+            for mcap_path in root.rglob("*.mcap"):
+                if scan_job.cancelled:
+                    break
+                if mcap_path.is_file():
+                    parent = str(mcap_path.parent)
+                    if parent not in folder_map:
+                        folder_map[parent] = []
+                    folder_map[parent].append(mcap_path)
+
+            if scan_job.cancelled:
+                if progress_callback:
+                    progress_callback(job_id, {
+                        "type": "scan_complete",
+                        "status": "cancelled",
+                    })
+                return
+
+            scan_job.folders_total = len(folder_map)
+
+            if progress_callback:
+                progress_callback(job_id, {
+                    "type": "scan_started",
+                    "folders_total": scan_job.folders_total,
+                    "root_folder": scan_job.root_folder,
+                })
+
+            # Phase 2: Process each subfolder
+            for folder_path_str, mcap_paths in sorted(folder_map.items()):
+                if scan_job.cancelled:
+                    break
+
+                try:
+                    relative_path = str(Path(folder_path_str).relative_to(root))
+                    if relative_path == ".":
+                        relative_path = "."
+
+                    # Collect file info
+                    file_paths: list[str] = []
+                    files_info: list[dict[str, Any]] = []
+                    folder_size = 0
+                    for mcap_path in sorted(mcap_paths, key=lambda p: p.name):
+                        stat = mcap_path.stat()
+                        file_paths.append(str(mcap_path))
+                        folder_size += stat.st_size
+                        files_info.append({
+                            "path": str(mcap_path),
+                            "filename": mcap_path.name,
+                            "size": stat.st_size,
+                            "mtime": stat.st_mtime,
+                            "relative_path": str(mcap_path.relative_to(root)),
+                        })
+
+                    # Pre-filter this batch for duplicates
+                    _, pre_stats = self.pre_filter_files(
+                        file_paths, s3_bucket, aws_profile, aws_region,
+                        cache_only=cache_only,
+                    )
+
+                    # Merge pre-filter results into file info
+                    prefilter_map: dict[str, bool] = {}
+                    for fs in pre_stats.get("file_statuses", []):
+                        prefilter_map[fs["path"]] = fs.get("already_uploaded", False)
+
+                    already_uploaded_count = 0
+                    for fi in files_info:
+                        fi["already_uploaded"] = prefilter_map.get(fi["path"], False)
+                        if fi["already_uploaded"]:
+                            already_uploaded_count += 1
+
+                    all_uploaded = already_uploaded_count == len(files_info) and len(files_info) > 0
+
+                    scanned = ScannedFolder(
+                        folder_path=folder_path_str,
+                        relative_path=relative_path,
+                        files=files_info,
+                        total_files=len(files_info),
+                        already_uploaded=already_uploaded_count,
+                        all_uploaded=all_uploaded,
+                    )
+
+                except Exception as e:
+                    relative_path = str(Path(folder_path_str).relative_to(root))
+                    scanned = ScannedFolder(
+                        folder_path=folder_path_str,
+                        relative_path=relative_path,
+                        files=[],
+                        error=str(e),
+                    )
+                    log.error(
+                        "scan",
+                        "scan_folder_error",
+                        f"Error scanning {folder_path_str}: {e}",
+                        {"job_id": job_id, "folder": folder_path_str, "error": str(e)},
+                    )
+
+                # Build folder dict for both storage and SSE
+                folder_dict = {
+                    "relative_path": scanned.relative_path,
+                    "files": scanned.files,
+                    "total_files": scanned.total_files,
+                    "already_uploaded": scanned.already_uploaded,
+                    "all_uploaded": scanned.all_uploaded,
+                    "error": scanned.error,
+                }
+
+                # Update running totals and store results
+                with scan_job.lock:
+                    scan_job.folders_scanned += 1
+                    scan_job.total_files_found += scanned.total_files
+                    scan_job.total_already_uploaded += scanned.already_uploaded
+                    scan_job.total_size += sum(f.get("size", 0) for f in scanned.files)
+                    scan_job.scanned_folders.append(folder_dict)
+
+                if progress_callback:
+                    progress_callback(job_id, {
+                        "type": "scan_folder_complete",
+                        "folder": folder_dict,
+                        "folders_scanned": scan_job.folders_scanned,
+                        "folders_total": scan_job.folders_total,
+                        "running_totals": {
+                            "total_files_found": scan_job.total_files_found,
+                            "total_already_uploaded": scan_job.total_already_uploaded,
+                            "total_size": scan_job.total_size,
+                        },
+                    })
+
+            # Terminal event
+            with scan_job.lock:
+                if scan_job.cancelled:
+                    scan_job.status = "cancelled"
+                else:
+                    scan_job.status = "completed"
+
+            if progress_callback:
+                progress_callback(job_id, {
+                    "type": "scan_complete",
+                    "status": scan_job.status,
+                    "folders_scanned": scan_job.folders_scanned,
+                    "folders_total": scan_job.folders_total,
+                    "total_files_found": scan_job.total_files_found,
+                    "total_already_uploaded": scan_job.total_already_uploaded,
+                    "total_size": scan_job.total_size,
+                })
+
+        except Exception as e:
+            scan_job.status = "failed"
+            log.error(
+                "scan",
+                "scan_job_failed",
+                f"Scan job {job_id} failed: {e}",
+                {"job_id": job_id, "error": str(e)},
+            )
+            if progress_callback:
+                progress_callback(job_id, {
+                    "type": "scan_complete",
+                    "status": "failed",
+                    "error": str(e),
+                })
 
     def get_active_jobs(self) -> list[UploadJob]:
         """Get all currently active (non-terminal) jobs."""
