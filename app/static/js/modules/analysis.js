@@ -1,5 +1,9 @@
 /**
  * File analysis/validation and combined upload progress (Step 3).
+ *
+ * Performance: Instead of creating one DOM row per file (20K+ rows),
+ * we track status in a Map and only render active uploads (max ~4-8 rows).
+ * Status counters are maintained via simple arithmetic, not DOM scans.
  */
 import { apiGet } from './api.js';
 import { hideEl, setText, showEl } from './dom.js';
@@ -14,7 +18,7 @@ const ANALYSIS_WEIGHT = 70;
 const UPLOAD_WEIGHT = 30;
 
 /**
- * Cache of last-known status per filename to avoid redundant DOM rebuilds.
+ * Cache of last-known status per filename.
  * @type {Map<string, string>}
  */
 const fileRowStatusCache = new Map();
@@ -28,8 +32,19 @@ let rafScheduled = false;
 /** Pending overall progress data to flush. @type {any} */
 let pendingProgressData = null;
 
-/** Current phase of the upload flow: 'analysis' or 'upload'. */
-let currentPhase = 'analysis';
+/**
+ * Status counters — maintained via transitions, never DOM-scanned.
+ * @type {{ pending: number, analyzing: number, ready: number, uploading: number, completed: number, skipped: number, failed: number }}
+ */
+const counts = {
+  pending: 0,
+  analyzing: 0,
+  ready: 0,
+  uploading: 0,
+  completed: 0,
+  skipped: 0,
+  failed: 0,
+};
 
 /**
  * Reset internal state (call when starting a new job or resetting).
@@ -39,7 +54,24 @@ export function resetAnalysisState() {
   pendingFileUpdates.clear();
   pendingProgressData = null;
   rafScheduled = false;
-  currentPhase = 'analysis';
+
+  counts.pending = 0;
+  counts.analyzing = 0;
+  counts.ready = 0;
+  counts.uploading = 0;
+  counts.completed = 0;
+  counts.skipped = 0;
+  counts.failed = 0;
+}
+
+/**
+ * Initialize status counters for a new job.
+ * @param {number} totalFiles
+ */
+export function initStatusCounts(totalFiles) {
+  resetAnalysisState();
+  counts.pending = totalFiles;
+  updateCounterDisplay();
 }
 
 /**
@@ -115,6 +147,7 @@ export function connectCombinedProgressStream(jobId) {
       // Set total from the first event that carries it
       if (data.total_files && analysisTotal === 0) {
         analysisTotal = data.total_files;
+        counts.pending = analysisTotal;
         setText('files-total', data.total_files);
       }
 
@@ -123,7 +156,7 @@ export function connectCombinedProgressStream(jobId) {
         analysisCompleted++;
       }
 
-      // Update progress bar for analysis phase (use float, let CSS transition smooth it)
+      // Update progress bar for analysis phase
       if (analysisTotal > 0) {
         const percent = (analysisCompleted / analysisTotal) * ANALYSIS_WEIGHT;
         setProgressBar(percent);
@@ -143,7 +176,6 @@ export function connectCombinedProgressStream(jobId) {
 
     // Auto-upload starting
     if (data.type === 'auto_upload_starting') {
-      currentPhase = 'upload';
       setPhaseLabel('Uploading files...');
     }
 
@@ -222,18 +254,35 @@ function scheduleRaf() {
   }
 }
 
-/** Flush all pending updates in a single animation frame. */
+/**
+ * Flush all pending updates in a single animation frame.
+ * Updates status counters and active upload rows — no per-file DOM scan.
+ */
 function flushUpdates() {
   rafScheduled = false;
 
-  // Flush pending file row updates
-  for (const [, fileData] of pendingFileUpdates) {
-    updateUploadFileRow(fileData);
+  // Process all pending file updates: track status transitions and active files
+  for (const [filename, fileData] of pendingFileUpdates) {
+    const oldStatus = fileRowStatusCache.get(filename) || 'pending';
+    const newStatus = fileData.is_duplicate ? 'skipped' : fileData.status;
+
+    if (oldStatus !== newStatus) {
+      // Decrement old counter
+      if (oldStatus in counts) counts[/** @type {keyof counts} */ (oldStatus)]--;
+      // Increment new counter
+      if (newStatus in counts) counts[/** @type {keyof counts} */ (newStatus)]++;
+
+      fileRowStatusCache.set(filename, newStatus);
+    }
   }
+
+  // Update active upload rows (only currently uploading/analyzing files)
+  updateActiveRows();
+
   pendingFileUpdates.clear();
 
-  // Recompute queue positions after row updates
-  recomputeQueuePositions();
+  // Update status counter display
+  updateCounterDisplay();
 
   // Flush pending overall progress
   if (pendingProgressData) {
@@ -243,103 +292,90 @@ function flushUpdates() {
 }
 
 /**
- * Recompute "Queued (X of Y)" labels for pending/ready-queued files.
+ * Update the active upload rows — only render files that are currently
+ * uploading or analyzing (max ~4-8 rows instead of 20K).
  */
-function recomputeQueuePositions() {
-  const allRows = document.querySelectorAll('[data-upload-file]');
-  // Determine which statuses count as "queued" based on current phase
-  const queuedStatuses = currentPhase === 'upload' ? ['ready'] : ['pending'];
+function updateActiveRows() {
+  const container = document.getElementById('upload-active-list');
+  if (!container) return;
 
-  // First pass: count queued files
-  let totalQueued = 0;
-  for (const row of allRows) {
-    const filename = /** @type {HTMLElement} */ (row).getAttribute('data-upload-file');
-    const status = fileRowStatusCache.get(filename || '');
-    if (status && queuedStatuses.includes(status)) {
-      totalQueued++;
+  // Collect currently active files from pending updates
+  /** @type {any[]} */
+  const activeFiles = [];
+  for (const [, fileData] of pendingFileUpdates) {
+    if (fileData.status === 'uploading' || fileData.status === 'analyzing') {
+      activeFiles.push(fileData);
     }
   }
 
-  if (totalQueued === 0) return;
+  // Also keep rows that are still active but weren't in this update batch
+  const existingRows = container.querySelectorAll('[data-upload-file]');
+  for (const row of existingRows) {
+    const filename = /** @type {HTMLElement} */ (row).getAttribute('data-upload-file') || '';
+    const currentStatus = fileRowStatusCache.get(filename);
+    if (currentStatus === 'uploading' || currentStatus === 'analyzing') {
+      // Keep it if not being replaced by a pending update
+      if (!pendingFileUpdates.has(filename)) continue;
+    } else {
+      // Status changed to non-active — remove row
+      row.remove();
+    }
+  }
 
-  // Second pass: assign positions
-  let pos = 1;
-  for (const row of allRows) {
-    const filename = /** @type {HTMLElement} */ (row).getAttribute('data-upload-file');
-    const status = fileRowStatusCache.get(filename || '');
-    if (status && queuedStatuses.includes(status)) {
-      const label = row.querySelector('[data-queue-label]');
-      if (label) {
-        label.textContent =
-          currentPhase === 'upload'
-            ? `Queued for upload (${pos} of ${totalQueued})`
-            : `Queued (${pos} of ${totalQueued})`;
+  // Upsert active file rows
+  for (const fileData of activeFiles) {
+    const row = container.querySelector(`[data-upload-file="${CSS.escape(fileData.filename)}"]`);
+
+    if (row) {
+      // Existing row — micro-update for progress
+      if (fileData.status === 'uploading') {
+        const bar = /** @type {HTMLElement | null} */ (row.querySelector('[data-progress-bar]'));
+        if (bar) bar.style.width = `${fileData.progress_percent || 0}%`;
+        const label = row.querySelector('[data-progress-label]');
+        if (label) {
+          label.textContent =
+            fileData.progress_percent != null ? `${fileData.progress_percent.toFixed(0)}%` : '';
+        }
+      } else {
+        // Status changed (e.g., pending → analyzing) — rebuild
+        row.innerHTML = buildActiveRowHTML(fileData);
       }
-      pos++;
+    } else {
+      // New active row
+      const div = document.createElement('div');
+      div.className = 'px-6 py-3 flex items-center justify-between';
+      div.setAttribute('data-upload-file', fileData.filename);
+      div.innerHTML = buildActiveRowHTML(fileData);
+      container.appendChild(div);
+    }
+  }
+
+  // Remove rows for files that completed/failed/skipped (no longer active)
+  for (const row of container.querySelectorAll('[data-upload-file]')) {
+    const filename = /** @type {HTMLElement} */ (row).getAttribute('data-upload-file') || '';
+    const status = fileRowStatusCache.get(filename);
+    if (status !== 'uploading' && status !== 'analyzing') {
+      row.remove();
     }
   }
 }
 
 /**
- * Update a single file row with minimal DOM changes.
- * Only rebuilds innerHTML on status transitions; for uploading progress,
- * just updates the bar width and percentage text to avoid resetting spinners.
- * @param {any} fileData
- */
-function updateUploadFileRow(fileData) {
-  const row = document.querySelector(`[data-upload-file="${fileData.filename}"]`);
-  if (!row) return;
-
-  const cachedStatus = fileRowStatusCache.get(fileData.filename);
-  const newStatus = fileData.is_duplicate ? `${fileData.status}:dup` : fileData.status;
-
-  // If status hasn't changed, only do micro-updates for uploading progress
-  if (cachedStatus === newStatus) {
-    if (fileData.status === 'uploading') {
-      const bar = /** @type {HTMLElement | null} */ (row.querySelector('[data-progress-bar]'));
-      if (bar) bar.style.width = `${fileData.progress_percent || 0}%`;
-      const label = row.querySelector('[data-progress-label]');
-      if (label) {
-        label.textContent =
-          fileData.progress_percent != null ? `${fileData.progress_percent.toFixed(0)}%` : '';
-      }
-    }
-    return;
-  }
-
-  // Status changed — full rebuild of the row
-  fileRowStatusCache.set(fileData.filename, newStatus);
-  row.innerHTML = buildFileRowHTML(fileData);
-}
-
-/**
- * Build the full HTML for a file row.
+ * Build HTML for an active file row.
  * @param {any} fileData
  * @returns {string}
  */
-function buildFileRowHTML(fileData) {
+function buildActiveRowHTML(fileData) {
   let statusIcon = '';
   let statusText = '';
 
-  if (fileData.status === 'completed') {
-    statusIcon =
-      '<svg class="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>';
-    statusText = '<span class="text-xs text-green-600">Uploaded</span>';
-  } else if (fileData.status === 'failed') {
-    statusIcon =
-      '<svg class="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>';
-    statusText = `<span class="text-xs text-red-600" title="${fileData.error_message || ''}">Failed</span>`;
-  } else if (fileData.status === 'skipped') {
-    statusIcon =
-      '<svg class="h-5 w-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 9l3 3m0 0l-3 3m3-3H8m13 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>';
-    statusText = '<span class="text-xs text-yellow-600">Skipped</span>';
-  } else if (fileData.status === 'uploading') {
+  if (fileData.status === 'uploading') {
     statusIcon =
       '<svg class="spinner h-5 w-5 text-nlr-blue" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
     const pct = fileData.progress_percent != null ? `${fileData.progress_percent.toFixed(0)}%` : '';
     statusText = `
       <div class="flex items-center space-x-2">
-        <div class="w-16 bg-gray-200 rounded-full h-2">
+        <div class="w-20 bg-gray-200 rounded-full h-2">
           <div data-progress-bar class="bg-nlr-blue h-2 rounded-full transition-[width] duration-300 ease-out" style="width: ${fileData.progress_percent || 0}%"></div>
         </div>
         <span data-progress-label class="text-xs text-gray-500 w-8">${pct}</span>
@@ -348,27 +384,6 @@ function buildFileRowHTML(fileData) {
     statusIcon =
       '<svg class="spinner h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
     statusText = '<span class="text-xs text-blue-600">Validating</span>';
-  } else if (fileData.status === 'ready') {
-    if (fileData.is_duplicate) {
-      statusIcon =
-        '<svg class="h-5 w-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>';
-      statusText = '<span class="text-xs text-yellow-600">Duplicate</span>';
-    } else if (currentPhase === 'upload') {
-      // In upload phase, non-duplicate ready files are queued for upload
-      statusIcon =
-        '<div class="h-5 w-5 text-gray-400"><svg class="h-5 w-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div>';
-      statusText = '<span data-queue-label class="text-xs text-gray-500">Queued for upload</span>';
-    } else {
-      statusIcon =
-        '<svg class="h-5 w-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4" /></svg>';
-      statusText = '<span class="text-xs text-green-600">Validated</span>';
-    }
-  } else if (fileData.status === 'pending') {
-    statusIcon =
-      '<div class="h-5 w-5 text-gray-400"><svg class="h-5 w-5 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div>';
-    statusText = '<span data-queue-label class="text-xs text-gray-500">Queued</span>';
-  } else {
-    statusText = `<span class="text-xs text-gray-400">${fileData.status || 'Unknown'}</span>`;
   }
 
   return `
@@ -381,6 +396,20 @@ function buildFileRowHTML(fileData) {
         ${statusText}
     </div>
   `;
+}
+
+/**
+ * Update the status counter display from the counts object.
+ * O(1) — just setting text on 5 elements.
+ */
+function updateCounterDisplay() {
+  const active = counts.analyzing + counts.uploading;
+  const queued = counts.pending + counts.ready;
+  setText('upload-count-active', String(active));
+  setText('upload-count-completed', String(counts.completed));
+  setText('upload-count-skipped', String(counts.skipped));
+  setText('upload-count-failed', String(counts.failed));
+  setText('upload-count-queued', String(queued));
 }
 
 /**
