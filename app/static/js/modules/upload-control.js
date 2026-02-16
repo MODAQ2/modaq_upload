@@ -9,6 +9,15 @@ import state from './state.js';
 import { hideUploadSteps } from './stepper.js';
 
 export async function cancelUpload() {
+  // Cancel scan job if active
+  if (state.scanJobId) {
+    try {
+      await apiPost(`/api/upload/cancel/${state.scanJobId}`);
+    } catch (_error) {
+      // Scan may have already finished
+    }
+  }
+
   if (!state.currentJobId) return;
 
   try {
@@ -41,4 +50,5 @@ export function resetUpload() {
   state.scanFileStatuses = [];
   state.scanTotalSize = 0;
   state.scanFolderPath = null;
+  state.scanJobId = null;
 }

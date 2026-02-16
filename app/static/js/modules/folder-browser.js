@@ -190,15 +190,16 @@ export async function loadFolderBrowser(path, isRetry = false) {
           ...data.folders.map(
             (/** @type {{ name: string, path: string, mcap_count: number }} */ folder) => `
                         <div class="px-6 py-3 flex items-center justify-between cursor-pointer hover:bg-gray-50"
-                             data-action="navigate-folder" data-path="${folder.path}">
+                             data-action="navigate-folder" data-path="${folder.path}"
+                             data-folder-name="${folder.name}">
                             <div class="flex items-center">
                                 ${folderIcon()}
                                 <span class="text-sm font-medium text-gray-900">${folder.name}</span>
                             </div>
                             ${
                               folder.mcap_count > 0
-                                ? `<span class="text-xs text-gray-500" title="Direct files only, not including subfolders">${folder.mcap_count} mcap</span>`
-                                : ''
+                                ? `<span class="folder-mcap-badge text-xs text-gray-500" title="Direct files only, not including subfolders">${folder.mcap_count} mcap</span>`
+                                : '<span class="folder-mcap-badge text-xs text-gray-500"></span>'
                             }
                         </div>
                     `,
@@ -220,6 +221,9 @@ export async function loadFolderBrowser(path, isRetry = false) {
       state.browserFiles = [];
       hideEl('file-table-section');
     }
+
+    // Start background scan for upload status enrichment
+    startBrowserScan(data.current_path);
   } catch (error) {
     hideEl('folder-loading');
     showEl('folder-error');
@@ -228,9 +232,10 @@ export async function loadFolderBrowser(path, isRetry = false) {
 }
 
 /**
- * Select the current folder and scan for MCAP files.
+ * Select the current folder and populate Step 2 from stored browser scan data.
+ * The browser scan has already accumulated state.scanFileStatuses and state.scanFilePaths.
  */
-async function selectCurrentFolder() {
+function selectCurrentFolder() {
   const btn = /** @type {HTMLButtonElement | null} */ (
     document.getElementById('select-folder-btn')
   );
@@ -239,83 +244,38 @@ async function selectCurrentFolder() {
   const folderPath = btn.dataset.path;
   if (!folderPath) return;
 
-  btn.disabled = true;
-  const btnSpan = btn.querySelector('span');
-  if (btnSpan) btnSpan.textContent = 'Scanning...';
+  state.selectedFolderPath = folderPath;
+  state.scanFolderPath = folderPath;
+  localStorage.setItem('lastUploadFolder', folderPath);
 
-  try {
-    const data = await apiPost('/api/upload/scan-folder', { folder_path: folderPath });
-
-    if (data.total_count === 0) {
-      showNotification('No MCAP files found in this folder', 'error');
-      return;
-    }
-
-    state.selectedFolderPath = folderPath;
-    localStorage.setItem('lastUploadFolder', folderPath);
-
-    const prefilterData = await apiPost('/api/upload/bulk-analyze', {
-      file_paths: data.files.map((/** @type {{ path: string }} */ f) => f.path),
-      pre_filter_only: true,
-    });
-
-    showScanResults(data, prefilterData.pre_filter_stats || {});
-  } catch (error) {
-    showNotification(/** @type {Error} */ (error).message, 'error');
-  } finally {
-    btn.disabled = false;
-    const resetSpan = btn.querySelector('span');
-    if (resetSpan) resetSpan.textContent = 'Upload This Folder';
-  }
-}
-
-/**
- * Show scan results UI with sortable review table.
- * @param {any} scanData
- * @param {any} prefilterStats
- */
-function showScanResults(scanData, prefilterStats) {
+  // Transition to Step 2 — populate from stored browser scan data
   showUploadSteps(2);
-
-  // Store folder path for relative path computation
-  state.scanFolderPath = scanData.folder_path;
-  state.scanTotalSize = scanData.total_size || 0;
-
-  setText('selected-folder-path', scanData.folder_path);
-  setText('scan-total', scanData.total_count);
-  setText('scan-total-volume', formatBytes(state.scanTotalSize));
-  setText('scan-already-uploaded', prefilterStats.cache_skipped || 0);
-
-  // Merge scan data files with prefilter statuses
-  const fileStatuses = prefilterStats.file_statuses || [];
-  /** @type {Map<string, any>} */
-  const prefilterMap = new Map();
-  for (const fs of fileStatuses) {
-    prefilterMap.set(fs.path, fs);
-  }
-
-  /** @type {Array<any>} */
-  const mergedStatuses = [];
-  for (const scanFile of scanData.files) {
-    const pf = prefilterMap.get(scanFile.path);
-    mergedStatuses.push({
-      path: scanFile.path,
-      filename: scanFile.filename,
-      size: scanFile.size,
-      mtime: scanFile.mtime || 0,
-      relative_path: scanFile.relative_path || scanFile.filename,
-      already_uploaded: pf ? pf.already_uploaded : false,
-    });
-  }
-
-  state.scanFilePaths = mergedStatuses
-    .filter((/** @type {any} */ f) => !f.already_uploaded)
-    .map((/** @type {any} */ f) => f.path);
-
-  state.scanFileStatuses = mergedStatuses;
   state.reviewSortConfig = { column: 'filename', ascending: true };
 
-  renderReviewTable(mergedStatuses);
+  setText('selected-folder-path', folderPath);
+  setText('scan-total', String(state.scanFileStatuses.length));
+  setText('scan-total-volume', formatBytes(state.scanTotalSize));
+  const uploadedCount = state.scanFileStatuses.filter(
+    (/** @type {any} */ f) => f.already_uploaded,
+  ).length;
+  setText('scan-already-uploaded', String(uploadedCount));
+
+  // Clear and populate review table from stored scan results
+  const tbody = document.getElementById('scan-file-list');
+  if (tbody) tbody.innerHTML = '';
+
+  for (const folder of state.browserScanResults) {
+    appendFolderToReviewTable(folder);
+  }
+
+  // Hide scan progress (scan already done), enable continue button
+  hideEl('scan-progress-container');
+  const continueBtn = /** @type {HTMLButtonElement | null} */ (
+    document.getElementById('continue-upload-btn')
+  );
+  if (continueBtn) {
+    continueBtn.disabled = state.scanFilePaths.length === 0;
+  }
 
   const hideUploadedCheckbox = /** @type {HTMLInputElement | null} */ (
     document.getElementById('scan-hide-uploaded')
@@ -325,11 +285,12 @@ function showScanResults(scanData, prefilterStats) {
     hideUploadedCheckbox.onchange = () => applyScanFileFilter();
   }
 
-  const continueBtn = /** @type {HTMLButtonElement | null} */ (
-    document.getElementById('continue-upload-btn')
+  const hideCompletedFoldersCheckbox = /** @type {HTMLInputElement | null} */ (
+    document.getElementById('scan-hide-completed-folders')
   );
-  if (continueBtn) {
-    continueBtn.disabled = state.scanFileStatuses.length === 0;
+  if (hideCompletedFoldersCheckbox) {
+    hideCompletedFoldersCheckbox.checked = false;
+    hideCompletedFoldersCheckbox.onchange = () => applyScanFileFilter();
   }
 
   hideEl('folder-browser-panel');
@@ -337,7 +298,387 @@ function showScanResults(scanData, prefilterStats) {
 }
 
 /**
- * Render the sortable review table body.
+ * Green checkmark SVG for fully-uploaded folders.
+ * @returns {string}
+ */
+function checkmarkIcon() {
+  return '<svg class="h-4 w-4 text-green-500 inline-block ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>';
+}
+
+/**
+ * Start a background cache-only scan for the current folder to enrich
+ * folder rows with upload status. Called automatically after navigation.
+ * @param {string} folderPath
+ */
+async function startBrowserScan(folderPath) {
+  // Cancel any existing browser scan
+  if (state.browserScanJobId) {
+    try {
+      await apiPost(`/api/upload/cancel/${state.browserScanJobId}`);
+    } catch (_error) {
+      // Scan may have already finished
+    }
+  }
+  if (state.browserScanEventSource) {
+    state.browserScanEventSource.close();
+    state.browserScanEventSource = null;
+  }
+
+  // Reset browser scan state
+  state.browserScanResults = [];
+  state.browserScanJobId = null;
+  state.browserScanComplete = false;
+  state.scanFileStatuses = [];
+  state.scanFilePaths = [];
+  state.scanTotalSize = 0;
+
+  // Running aggregation map: immediate child folder name → { totalFiles, alreadyUploaded }
+  /** @type {Map<string, { totalFiles: number, alreadyUploaded: number }>} */
+  const folderAggregation = new Map();
+
+  // Root file aggregation (for files in the browsed folder itself)
+  let rootTotalFiles = 0;
+  let rootAlreadyUploaded = 0;
+
+  // Disable Upload button until scan completes
+  const selectBtn = /** @type {HTMLButtonElement | null} */ (
+    document.getElementById('select-folder-btn')
+  );
+  if (selectBtn) {
+    selectBtn.disabled = true;
+    const btnSpan = selectBtn.querySelector('span');
+    if (btnSpan) btnSpan.textContent = 'Scanning...';
+  }
+
+  // Show scan status bar
+  showEl('browser-scan-status');
+  const spinner = document.getElementById('browser-scan-spinner');
+  if (spinner) spinner.classList.remove('hidden');
+  setText('browser-scan-text', 'Scanning folders...');
+
+  // Wire up hide-uploaded toggle
+  const hideCheckbox = /** @type {HTMLInputElement | null} */ (
+    document.getElementById('browser-hide-uploaded')
+  );
+  if (hideCheckbox) {
+    hideCheckbox.onchange = () => applyBrowserHideUploaded(hideCheckbox.checked);
+  }
+
+  try {
+    const data = await apiPost('/api/upload/scan-folder-async', {
+      folder_path: folderPath,
+      cache_only: true,
+    });
+
+    state.browserScanJobId = data.job_id;
+
+    // Connect SSE for browser scan progress
+    state.browserScanEventSource = new EventSource(`/api/upload/progress/${data.job_id}`);
+
+    state.browserScanEventSource.onmessage = (event) => {
+      const eventData = JSON.parse(event.data);
+
+      if (eventData.error) {
+        showNotification(eventData.error, 'error');
+        closeBrowserScan();
+        enableUploadButton(folderPath);
+        return;
+      }
+
+      if (eventData.type === 'scan_started') {
+        setText('browser-scan-text', `Scanning 0 of ${eventData.folders_total} folders...`);
+      }
+
+      if (eventData.type === 'scan_folder_complete') {
+        const folder = eventData.folder;
+        const totals = eventData.running_totals;
+
+        // Store result
+        state.browserScanResults.push(folder);
+        state.scanTotalSize = totals.total_size;
+
+        // Accumulate file statuses and paths
+        for (const file of folder.files) {
+          state.scanFileStatuses.push(file);
+          if (!file.already_uploaded) {
+            state.scanFilePaths.push(file.path);
+          }
+        }
+
+        // Determine which immediate child this leaf folder belongs to
+        if (folder.relative_path === '.') {
+          // Root folder files
+          rootTotalFiles += folder.total_files;
+          rootAlreadyUploaded += folder.already_uploaded;
+          updateRootUploadStatus(rootTotalFiles, rootAlreadyUploaded);
+        } else {
+          // Extract the first path component
+          const firstSlash = folder.relative_path.indexOf('/');
+          const immediateChild =
+            firstSlash >= 0 ? folder.relative_path.substring(0, firstSlash) : folder.relative_path;
+
+          const existing = folderAggregation.get(immediateChild) || {
+            totalFiles: 0,
+            alreadyUploaded: 0,
+          };
+          existing.totalFiles += folder.total_files;
+          existing.alreadyUploaded += folder.already_uploaded;
+          folderAggregation.set(immediateChild, existing);
+
+          // Update the matching folder row in the browser
+          updateFolderRowBadge(immediateChild, existing);
+        }
+
+        // Update status bar
+        setText(
+          'browser-scan-text',
+          `Scanning ${eventData.folders_scanned} of ${eventData.folders_total} folders...`,
+        );
+
+        // Update Upload button summary
+        updateUploadButtonSummary();
+      }
+
+      if (eventData.type === 'scan_complete') {
+        closeBrowserScan();
+        state.browserScanComplete = true;
+
+        // Hide spinner, show final status
+        if (spinner) spinner.classList.add('hidden');
+
+        const totalFiles = state.scanFileStatuses.length;
+        const alreadyUploaded = state.scanFileStatuses.filter(
+          (/** @type {any} */ f) => f.already_uploaded,
+        ).length;
+        const toUpload = totalFiles - alreadyUploaded;
+
+        if (totalFiles === 0) {
+          setText('browser-scan-text', 'No MCAP files found in subfolders.');
+          enableUploadButton(folderPath);
+        } else if (toUpload === 0) {
+          setText('browser-scan-text', `All ${totalFiles} files already uploaded.`);
+          enableUploadButton(folderPath, true);
+        } else {
+          setText(
+            'browser-scan-text',
+            `Scan complete: ${toUpload} to upload, ${alreadyUploaded} already uploaded.`,
+          );
+          enableUploadButton(folderPath);
+        }
+      }
+    };
+
+    state.browserScanEventSource.onerror = () => {
+      closeBrowserScan();
+      enableUploadButton(folderPath);
+    };
+  } catch (error) {
+    showNotification(/** @type {Error} */ (error).message, 'error');
+    closeBrowserScan();
+    enableUploadButton(folderPath);
+  }
+}
+
+/**
+ * Close the browser scan SSE connection.
+ */
+function closeBrowserScan() {
+  if (state.browserScanEventSource) {
+    state.browserScanEventSource.close();
+    state.browserScanEventSource = null;
+  }
+}
+
+/**
+ * Re-enable the Upload button after scan completes.
+ * @param {string} folderPath
+ * @param {boolean} [allUploaded] - If true, keep button disabled (nothing to upload)
+ */
+function enableUploadButton(folderPath, allUploaded = false) {
+  const selectBtn = /** @type {HTMLButtonElement | null} */ (
+    document.getElementById('select-folder-btn')
+  );
+  if (!selectBtn) return;
+
+  if (allUploaded) {
+    selectBtn.disabled = true;
+    const btnSpan = selectBtn.querySelector('span');
+    if (btnSpan) btnSpan.textContent = 'All Files Uploaded';
+  } else {
+    selectBtn.disabled = false;
+    selectBtn.dataset.path = folderPath;
+    updateUploadButtonSummary();
+  }
+}
+
+/**
+ * Update the Upload button label and summary text based on scan data.
+ */
+function updateUploadButtonSummary() {
+  const toUploadCount = state.scanFilePaths.length;
+  const totalCount = state.scanFileStatuses.length;
+  const uploadedCount = totalCount - toUploadCount;
+
+  const selectBtn = /** @type {HTMLButtonElement | null} */ (
+    document.getElementById('select-folder-btn')
+  );
+  if (selectBtn) {
+    const btnSpan = selectBtn.querySelector('span');
+    if (btnSpan) {
+      if (toUploadCount > 0) {
+        btnSpan.textContent = `Upload ${toUploadCount} Files`;
+      } else if (totalCount > 0) {
+        btnSpan.textContent = 'All Files Uploaded';
+      } else {
+        btnSpan.textContent = 'Upload This Folder';
+      }
+    }
+  }
+
+  // Update bottom summary text
+  if (totalCount > 0) {
+    const sizeToUpload = state.scanFileStatuses
+      .filter((/** @type {any} */ f) => !f.already_uploaded)
+      .reduce((/** @type {number} */ sum, /** @type {any} */ f) => sum + f.size, 0);
+    if (toUploadCount > 0) {
+      setText(
+        'folder-select-summary',
+        `${toUploadCount} of ${totalCount} files to upload (${formatBytes(sizeToUpload)}). ${uploadedCount} already uploaded.`,
+      );
+    } else {
+      setText('folder-select-summary', `All ${totalCount} files are already uploaded.`);
+    }
+  }
+}
+
+/**
+ * Update a folder row's badge with scan results.
+ * @param {string} folderName
+ * @param {{ totalFiles: number, alreadyUploaded: number }} stats
+ */
+function updateFolderRowBadge(folderName, stats) {
+  const folderList = document.getElementById('folder-list');
+  if (!folderList) return;
+
+  const row = folderList.querySelector(`[data-folder-name="${CSS.escape(folderName)}"]`);
+  if (!row) return;
+
+  const badge = row.querySelector('.folder-mcap-badge');
+  if (!badge) return;
+
+  const allUploaded = stats.alreadyUploaded === stats.totalFiles && stats.totalFiles > 0;
+
+  if (allUploaded) {
+    badge.innerHTML = `${stats.totalFiles} mcap (${stats.alreadyUploaded} uploaded) ${checkmarkIcon()}`;
+    row.classList.add('bg-green-50');
+    /** @type {HTMLElement} */ (row).dataset.allUploaded = 'true';
+  } else if (stats.alreadyUploaded > 0) {
+    badge.textContent = `${stats.totalFiles} mcap (${stats.alreadyUploaded} uploaded)`;
+  } else {
+    badge.textContent = `${stats.totalFiles} mcap`;
+  }
+}
+
+/**
+ * Update the root upload status in the MCAP count info bar.
+ * @param {number} totalFiles
+ * @param {number} alreadyUploaded
+ */
+function updateRootUploadStatus(totalFiles, alreadyUploaded) {
+  const statusEl = document.getElementById('browser-root-upload-status');
+  if (!statusEl) return;
+
+  if (alreadyUploaded === totalFiles && totalFiles > 0) {
+    statusEl.innerHTML = `<span class="text-green-600">(${alreadyUploaded} uploaded) ${checkmarkIcon()}</span>`;
+  } else if (alreadyUploaded > 0) {
+    statusEl.innerHTML = `<span class="text-gray-600">(${alreadyUploaded} of ${totalFiles} uploaded)</span>`;
+  }
+}
+
+/**
+ * Toggle visibility of fully-uploaded folder rows in the browser.
+ * @param {boolean} hide
+ */
+function applyBrowserHideUploaded(hide) {
+  const folderList = document.getElementById('folder-list');
+  if (!folderList) return;
+
+  const rows = folderList.querySelectorAll('[data-folder-name]');
+  for (const row of rows) {
+    if (hide && /** @type {HTMLElement} */ (row).dataset.allUploaded === 'true') {
+      /** @type {HTMLElement} */ (row).classList.add('hidden');
+    } else {
+      /** @type {HTMLElement} */ (row).classList.remove('hidden');
+    }
+  }
+}
+
+/**
+ * Append a scanned folder's results to the review table incrementally.
+ * @param {{ relative_path: string, files: any[], total_files: number, already_uploaded: number, all_uploaded: boolean, error: string | null }} folderData
+ */
+function appendFolderToReviewTable(folderData) {
+  const tbody = document.getElementById('scan-file-list');
+  if (!tbody) return;
+
+  const folderLabel = folderData.relative_path === '.' ? '(root)' : folderData.relative_path;
+  const uploadedSummary = `${folderData.already_uploaded}/${folderData.total_files} uploaded`;
+
+  // Build folder header row
+  const headerHtml = `
+    <tr class="bg-gray-100 ${folderData.all_uploaded ? 'folder-all-uploaded' : ''}"
+        data-folder-header
+        data-all-uploaded="${folderData.all_uploaded}">
+      <td colspan="5" class="px-4 py-2">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center">
+            ${folderIcon('h-4 w-4 text-nlr-yellow mr-2')}
+            <span class="text-sm font-medium text-gray-700">${folderLabel}</span>
+            ${folderData.all_uploaded ? checkmarkIcon() : ''}
+          </div>
+          <div class="flex items-center space-x-2">
+            <span class="text-xs text-gray-500">${uploadedSummary}</span>
+            ${folderData.error ? `<span class="text-xs text-red-600 bg-red-100 px-2 py-0.5 rounded-full">Error: ${folderData.error}</span>` : ''}
+          </div>
+        </div>
+      </td>
+    </tr>
+  `;
+
+  // Build file rows under this folder
+  let fileRowsHtml = '';
+  for (const file of folderData.files) {
+    const dirPath = getDirectoryPart(file.relative_path);
+    fileRowsHtml += `
+      <tr class="${file.already_uploaded ? 'bg-yellow-50' : ''}"
+          data-already-uploaded="${file.already_uploaded}">
+        <td class="pl-8 pr-4 py-3">
+          <span class="text-sm ${file.already_uploaded ? 'text-gray-500' : 'text-gray-900'} truncate block" title="${file.filename}">
+            ${file.filename}
+          </span>
+        </td>
+        <td class="px-4 py-3">
+          <span class="text-sm text-gray-500 truncate block" title="${dirPath}">${dirPath || '.'}</span>
+        </td>
+        <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatMtime(file.mtime)}</td>
+        <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${formatBytes(file.size)}</td>
+        <td class="px-4 py-3 whitespace-nowrap">
+          <span class="px-2 py-1 text-xs rounded-full ${file.already_uploaded ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800'}">
+            ${file.already_uploaded ? 'Uploaded' : 'To Upload'}
+          </span>
+        </td>
+      </tr>
+    `;
+  }
+
+  tbody.insertAdjacentHTML('beforeend', headerHtml + fileRowsHtml);
+
+  // Apply current filter
+  applyScanFileFilter();
+}
+
+/**
+ * Render the sortable review table body (flat view, used for re-sorting).
  * @param {any[]} fileStatuses
  */
 function renderReviewTable(fileStatuses) {
@@ -422,12 +763,50 @@ function applyScanFileFilter() {
     document.getElementById('scan-hide-uploaded')
   );
   const hideUploaded = hideUploadedEl?.checked || false;
+
+  const hideCompletedFoldersEl = /** @type {HTMLInputElement | null} */ (
+    document.getElementById('scan-hide-completed-folders')
+  );
+  const hideCompletedFolders = hideCompletedFoldersEl?.checked || false;
+
   const tbody = document.getElementById('scan-file-list');
   if (!tbody) return;
 
-  const rows = tbody.querySelectorAll('[data-already-uploaded]');
-  for (const row of rows) {
-    if (hideUploaded && /** @type {HTMLElement} */ (row).dataset.alreadyUploaded === 'true') {
+  // Determine which folder headers are for completed folders
+  /** @type {Set<Element>} */
+  const hiddenFolderHeaders = new Set();
+
+  // First pass: process folder headers
+  const folderHeaders = tbody.querySelectorAll('[data-folder-header]');
+  for (const header of folderHeaders) {
+    if (
+      hideCompletedFolders &&
+      /** @type {HTMLElement} */ (header).dataset.allUploaded === 'true'
+    ) {
+      header.classList.add('hidden');
+      hiddenFolderHeaders.add(header);
+    } else {
+      header.classList.remove('hidden');
+    }
+  }
+
+  // Second pass: process file rows
+  // For each file row, find its parent folder header (the nearest preceding [data-folder-header])
+  const allRows = /** @type {NodeListOf<HTMLElement>} */ (tbody.querySelectorAll('tr'));
+  /** @type {Element | null} */
+  let currentFolderHeader = null;
+
+  for (const row of allRows) {
+    if (row.hasAttribute('data-folder-header')) {
+      currentFolderHeader = row;
+      continue;
+    }
+
+    // This is a file row
+    const isUploaded = row.dataset.alreadyUploaded === 'true';
+    const inHiddenFolder = currentFolderHeader && hiddenFolderHeaders.has(currentFolderHeader);
+
+    if (inHiddenFolder || (hideUploaded && isUploaded)) {
       row.classList.add('hidden');
     } else {
       row.classList.remove('hidden');
