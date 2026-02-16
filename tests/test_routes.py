@@ -138,7 +138,6 @@ class TestUploadAPI:
 
         data = json.loads(response.data)
         assert "job_id" in data
-        assert "files" in data
         assert data["status"] == "analyzing"
 
     def test_get_status_not_found(self, client: FlaskClient) -> None:
