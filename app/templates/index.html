@@ -233,20 +233,20 @@
                 <table class="w-full divide-y divide-gray-200 table-fixed">
                     <thead class="bg-gray-50">
                         <tr>
-                            <th class="w-1/4 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="filename">
-                                Filename <span class="sort-indicator"></span>
+                            <th class="w-1/4 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Filename
                             </th>
-                            <th class="w-1/4 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="path">
-                                Path <span class="sort-indicator"></span>
+                            <th class="w-1/4 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Path
                             </th>
-                            <th class="w-1/6 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="mtime">
-                                Date Modified <span class="sort-indicator"></span>
+                            <th class="w-1/6 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Date Modified
                             </th>
-                            <th class="w-20 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="size">
-                                Size <span class="sort-indicator"></span>
+                            <th class="w-20 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Size
                             </th>
-                            <th class="w-24 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" data-sort="status">
-                                Status <span class="sort-indicator"></span>
+                            <th class="w-24 px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Status
                             </th>
                         </tr>
                     </thead>
@@ -293,9 +293,18 @@
                 </div>
             </div>
 
-            <!-- File Status List -->
-            <div id="upload-file-list" class="divide-y divide-gray-200 max-h-96 overflow-y-auto">
-                <!-- File progress items will be inserted here -->
+            <!-- Compact Status Counters -->
+            <div id="upload-status-counters" class="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center space-x-4 text-sm">
+                <span class="text-blue-600"><span class="inline-block w-2 h-2 bg-blue-500 rounded-full mr-1 animate-pulse"></span> <span id="upload-count-active">0</span> active</span>
+                <span class="text-green-600">&#10003; <span id="upload-count-completed">0</span> completed</span>
+                <span class="text-yellow-600">&#9193; <span id="upload-count-skipped">0</span> skipped</span>
+                <span class="text-red-600">&#10007; <span id="upload-count-failed">0</span> failed</span>
+                <span class="text-gray-500">&#9203; <span id="upload-count-queued">0</span> queued</span>
+            </div>
+
+            <!-- Active Uploads (only currently processing files, max ~4-8) -->
+            <div id="upload-active-list" class="divide-y divide-gray-200">
+                <!-- Only actively uploading/analyzing files appear here -->
             </div>
         </div>
     </div>
@@ -357,10 +366,15 @@
                 </div>
             </div>
 
-            <!-- File Details Table -->
+            <!-- File Details Table (paginated) -->
             <div class="border-t border-gray-200">
-                <div class="px-6 py-3 bg-gray-50 border-b border-gray-200">
+                <div class="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                     <span class="text-sm font-medium text-gray-700">File Details</span>
+                    <div id="completion-pagination" class="flex items-center space-x-2 text-sm">
+                        <button id="completion-prev-btn" class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" disabled>Prev</button>
+                        <span id="completion-page-info" class="text-gray-600">Page 1 of 1</span>
+                        <button id="completion-next-btn" class="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed" disabled>Next</button>
+                    </div>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full divide-y divide-gray-200">
