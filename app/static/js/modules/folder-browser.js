@@ -1,4 +1,4 @@
-import { connectCombinedProgressStream } from './analysis.js';
+import { connectCombinedProgressStream, initStatusCounts } from './analysis.js';
 import { apiGet, apiPost } from './api.js';
 import { hideEl, setText, showEl } from './dom.js';
 import { formatBytes, formatMtime } from './formatters.js';
