@@ -88,7 +88,28 @@
         <div class="px-6 py-2 bg-blue-50 border-b border-gray-200 flex items-center justify-between">
             <span class="text-sm text-blue-800" title="Does not include files in subfolders">
                 <span id="folder-mcap-count">0</span> MCAP files in this folder (not subfolders)
+                <span id="browser-root-upload-status" class="ml-2"></span>
             </span>
+        </div>
+
+        <!-- Browser Scan Status Bar -->
+        <div id="browser-scan-status" class="hidden px-6 py-2 bg-green-50 border-b border-gray-200">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <svg id="browser-scan-spinner" class="animate-spin h-4 w-4 text-nlr-blue" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span id="browser-scan-text" class="text-sm text-gray-700">
+                        Scanning folders...
+                    </span>
+                </div>
+                <label class="flex items-center">
+                    <input type="checkbox" id="browser-hide-uploaded"
+                           class="rounded border-gray-300 text-nlr-blue focus:ring-nlr-blue">
+                    <span class="ml-2 text-sm text-gray-600">Hide uploaded folders</span>
+                </label>
+            </div>
         </div>
 
         <!-- Folder List (subfolders) -->
@@ -161,6 +182,19 @@
                     {{ stat_card("scan-already-uploaded", "Already Uploaded", "yellow") }}
                 </div>
 
+                <!-- Scan Progress Indicator -->
+                <div id="scan-progress-container" class="hidden mb-4">
+                    <div class="flex items-center space-x-3 px-4 py-3 bg-blue-50 rounded-lg">
+                        <svg class="animate-spin h-5 w-5 text-nlr-blue" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span id="scan-progress-text" class="text-sm text-blue-800">
+                            Scanning folders...
+                        </span>
+                    </div>
+                </div>
+
                 <div class="flex justify-center space-x-4">
                     <button id="cancel-scan-btn"
                             class="px-6 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors flex items-center">
@@ -182,11 +216,18 @@
             <!-- Sortable File Table -->
             <div class="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                 <span class="text-sm font-medium text-gray-700">Files</span>
-                <label class="flex items-center">
-                    <input type="checkbox" id="scan-hide-uploaded"
-                           class="rounded border-gray-300 text-nlr-blue focus:ring-nlr-blue">
-                    <span class="ml-2 text-sm text-gray-600">Hide already uploaded</span>
-                </label>
+                <div class="flex items-center space-x-4">
+                    <label class="flex items-center">
+                        <input type="checkbox" id="scan-hide-completed-folders"
+                               class="rounded border-gray-300 text-nlr-blue focus:ring-nlr-blue">
+                        <span class="ml-2 text-sm text-gray-600">Hide completed folders</span>
+                    </label>
+                    <label class="flex items-center">
+                        <input type="checkbox" id="scan-hide-uploaded"
+                               class="rounded border-gray-300 text-nlr-blue focus:ring-nlr-blue">
+                        <span class="ml-2 text-sm text-gray-600">Hide already uploaded</span>
+                    </label>
+                </div>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full divide-y divide-gray-200 table-fixed">
