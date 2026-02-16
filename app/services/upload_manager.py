@@ -196,6 +196,33 @@ class UploadJob:
             return round(self.successfully_uploaded_bytes / duration / 1024 / 1024 * 8, 2)
         return None
 
+    def to_progress_dict(self) -> dict[str, Any]:
+        """Lightweight dict for SSE progress events.
+
+        Includes only job-level stats and currently active files (uploading/analyzing),
+        dropping the full 20K-file array that to_dict() includes.
+        """
+        active_files = [
+            f.to_dict()
+            for f in self.files
+            if f.status in (UploadStatus.UPLOADING, UploadStatus.ANALYZING)
+        ]
+        return {
+            "job_id": self.job_id,
+            "status": self.status.value,
+            "progress_percent": self.progress_percent,
+            "files_completed": self.files_completed,
+            "total_files": len(self.files),
+            "uploaded_bytes_formatted": format_file_size(self.uploaded_bytes),
+            "total_bytes_formatted": format_file_size(self.total_bytes),
+            "eta_seconds": self.eta_seconds,
+            "files_failed": self.files_failed,
+            "files_skipped": sum(1 for f in self.files if f.status == UploadStatus.SKIPPED),
+            "files_uploaded": sum(1 for f in self.files if f.status == UploadStatus.COMPLETED),
+            "cancelled": self.cancelled,
+            "files": active_files,
+        }
+
     def resolve_analysis_status(self) -> None:
         """Set job status based on file analysis results."""
         if any(f.status == UploadStatus.READY for f in self.files):
@@ -557,12 +584,6 @@ class UploadManager:
             {"job_id": job_id, "total_files": len(job.files)},
         )
 
-        # Keep files as PENDING; workers will mark ANALYZING when they start.
-        # Send initial callbacks so frontend knows the job started and can show queue.
-        if progress_callback:
-            for file_state in job.files:
-                progress_callback(job, file_state)
-
         # Create S3 client for duplicate checking
         try:
             s3_client = s3_service.create_s3_client(aws_profile, aws_region)
@@ -580,8 +601,6 @@ class UploadManager:
         cpu_workers = max(1, (os.cpu_count() or 4) - 1)
         for file_state in job.files:
             file_state.status = UploadStatus.ANALYZING
-            if progress_callback:
-                progress_callback(job, file_state)
 
         with ProcessPoolExecutor(max_workers=cpu_workers) as proc_executor:
             parse_futures = {
@@ -628,7 +647,7 @@ class UploadManager:
             for fut in as_completed(dup_futures):
                 file_state = dup_futures[fut]
                 try:
-                    future.result()
+                    fut.result()
                     file_state.status = UploadStatus.READY
                     log.info(
                         "analysis",
