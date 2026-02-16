@@ -128,7 +128,6 @@ def analyze_files() -> tuple[Response, int]:
             "job_id": job.job_id,
             "status": "analyzing",
             "total_files": len(job.files),
-            "files": [f.to_dict() for f in job.files],
         }
     ), 202
 
@@ -161,8 +160,11 @@ def start_upload(job_id: str) -> tuple[Response, int]:
             skip_duplicates = data.get("skip_duplicates", True)
 
     def progress_callback(job: UploadJob) -> None:
-        """Send progress updates via SSE."""
-        send_sse_event(job.job_id, job.to_dict())
+        """Send progress updates via SSE — lightweight during upload, full at completion."""
+        if job.status in (UploadStatus.COMPLETED, UploadStatus.FAILED, UploadStatus.CANCELLED):
+            send_sse_event(job.job_id, job.to_dict())
+        else:
+            send_sse_event(job.job_id, job.to_progress_dict())
 
     # Start upload in background thread
     def run_upload() -> None:
@@ -206,7 +208,14 @@ def get_progress(job_id: str) -> Response:
             job = manager.get_job(job_id)
             scan_job = manager.get_scan_job(job_id) if not job else None
             if job:
-                yield f"data: {json.dumps(job.to_dict())}\n\n"
+                if job.status in (
+                    UploadStatus.COMPLETED,
+                    UploadStatus.FAILED,
+                    UploadStatus.CANCELLED,
+                ):
+                    yield f"data: {json.dumps(job.to_dict())}\n\n"
+                else:
+                    yield f"data: {json.dumps(job.to_progress_dict())}\n\n"
             elif scan_job:
                 yield f"data: {json.dumps({'type': 'scan_initial', 'status': scan_job.status})}\n\n"
 
@@ -530,8 +539,11 @@ def bulk_analyze() -> tuple[Response, int]:
     analysis_progress_callback = _make_analysis_callback(job.job_id)
 
     def upload_progress_callback(job: UploadJob) -> None:
-        """Send upload progress updates via SSE."""
-        send_sse_event(job.job_id, job.to_dict())
+        """Send upload progress updates via SSE — lightweight during upload, full at completion."""
+        if job.status in (UploadStatus.COMPLETED, UploadStatus.FAILED, UploadStatus.CANCELLED):
+            send_sse_event(job.job_id, job.to_dict())
+        else:
+            send_sse_event(job.job_id, job.to_progress_dict())
 
     # Start analysis in background thread
     def run_bulk_analysis() -> None:
@@ -586,6 +598,5 @@ def bulk_analyze() -> tuple[Response, int]:
             "total_files": len(job.files),
             "pre_filter_stats": pre_filter_stats,
             "auto_upload": auto_upload,
-            "files": [f.to_dict() for f in job.files],
         }
     ), 202
