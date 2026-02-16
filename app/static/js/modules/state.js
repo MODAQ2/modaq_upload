@@ -36,6 +36,9 @@ const state = {
   /** @type {string | null} */
   scanFolderPath: null,
 
+  /** @type {string | null} */
+  scanJobId: null,
+
   /** Sort configuration for the review table */
   reviewSortConfig: { column: 'filename', ascending: true },
 
@@ -44,6 +47,18 @@ const state = {
 
   /** Sort configuration for the folder browser file table */
   browserFileSortConfig: { column: 'name', ascending: true },
+
+  /** @type {Array<{ relative_path: string, files: any[], total_files: number, already_uploaded: number, all_uploaded: boolean, error: string | null }>} */
+  browserScanResults: [],
+
+  /** @type {EventSource | null} Browser scan SSE connection (separate from main eventSource) */
+  browserScanEventSource: null,
+
+  /** @type {string | null} Browser scan job ID */
+  browserScanJobId: null,
+
+  /** Whether the browser scan has completed */
+  browserScanComplete: false,
 
   /** Log viewer filter state */
   logFilters: {
