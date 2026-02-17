@@ -1,0 +1,186 @@
+@import "tailwindcss";
+
+/* ── NLR Brand Colors (Tailwind v4 @theme) ── */
+@theme {
+  --color-nlr-blue: #0079C2;
+  --color-nlr-blue-light: #00A3E4;
+  --color-nlr-yellow: #EE9521;
+  --color-nlr-yellow-light: #FFC423;
+  --color-nlr-green: #5D9732;
+  --color-nlr-green-light: #9ECE42;
+  --color-nlr-gray: #5E6A71;
+  --color-nlr-gray-light: #D1D5D8;
+  --color-nlr-gray-bg: #EDEDED;
+  --color-nlr-gray-footer: #E3E6E8;
+  --color-nlr-text: #212224;
+  --font-family-roboto: "Roboto", "Helvetica Neue", Helvetica, sans-serif;
+}
+
+/* ── Base ── */
+body {
+  font-family: var(--font-family-roboto);
+}
+
+/* ── NLR Header ── */
+.nlr-header {
+  background: #fff;
+  width: 100%;
+}
+
+.nlr-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 100px;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 15px;
+}
+
+.nlr-header-title {
+  font-weight: normal;
+  color: #212224;
+  font-size: 24px;
+  letter-spacing: 0.5px;
+}
+
+.nlr-logo-image {
+  width: 200px;
+}
+
+/* ── Menu bar ── */
+.nlr-menu-bar {
+  background: #EDEDED;
+  border-top: 1px solid #D6D4D4;
+  height: 50px;
+}
+
+.nlr-menu-container {
+  max-width: 1140px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 15px;
+}
+
+.nlr-menu-item {
+  color: #2F2F2F;
+  padding: 14px 20px;
+  font-size: 14px;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+
+.nlr-menu-item:hover,
+.nlr-menu-item.active {
+  background: #5E6A71;
+  color: #fff;
+}
+
+/* ── NLR Footer ── */
+.nlr-footer {
+  background-color: #E3E6E8;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+.nlr-footer-top {
+  background-color: #D1D5D8;
+  padding: 1.5em 0;
+}
+
+.nlr-footer-bottom {
+  padding: 1.5em 0 3em 0;
+}
+
+.nlr-footer a {
+  color: #000;
+  text-decoration: none;
+}
+
+.nlr-footer a:hover {
+  color: #C60;
+  text-decoration: underline;
+}
+
+.nlr-attr {
+  font-size: 12px;
+}
+
+/* ── Scrollbar-hide utility ── */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Drag and drop ── */
+.drop-zone {
+  transition: all 0.3s ease;
+}
+
+.drop-zone.drag-over {
+  border-color: #0079C2;
+  background-color: rgba(0, 121, 194, 0.1);
+}
+
+/* ── Progress bar animation ── */
+.progress-bar {
+  transition: width 0.4s ease-out;
+}
+
+/* ── File item hover ── */
+.file-item:hover {
+  background-color: rgba(0, 121, 194, 0.05);
+}
+
+/* ── Spinner ── */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+/* ── Step indicator transitions ── */
+.step-circle,
+.step-label,
+.step-connector {
+  transition: all 0.3s ease;
+}
+
+/* ── Responsive ── */
+@media (max-width: 991px) {
+  .nlr-header-top,
+  .nlr-menu-container {
+    max-width: 720px;
+  }
+}
+
+@media (max-width: 767px) {
+  .nlr-header-top {
+    flex-direction: column;
+    height: auto;
+    padding: 15px;
+    text-align: center;
+  }
+
+  .nlr-header-title {
+    font-size: 20px;
+    margin-top: 10px;
+  }
+
+  .nlr-logo-image {
+    width: 180px;
+  }
+
+  .nlr-menu-item {
+    padding: 12px 15px;
+    font-size: 13px;
+  }
+}
