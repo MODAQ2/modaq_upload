@@ -417,8 +417,18 @@ class LogService:
 
         dates.sort()
 
-        # Count CSV files
-        csv_count = len(list(csv_dir.rglob("*.csv"))) if csv_dir.exists() else 0
+        # Collect CSV file details
+        csv_files: list[dict[str, Any]] = []
+        if csv_dir.exists():
+            for csv_file in sorted(csv_dir.rglob("*.csv"), reverse=True):
+                date_str = self._extract_date_from_hive_path(csv_file) or ""
+                rel_path = str(csv_file.relative_to(log_dir))
+                csv_files.append({
+                    "path": rel_path,
+                    "filename": csv_file.name,
+                    "date": date_str,
+                    "size": csv_file.stat().st_size,
+                })
 
         return {
             "total_entries": total_entries,
@@ -431,7 +441,119 @@ class LogService:
                 "latest": dates[-1] if dates else None,
             },
             "file_count": len(event_files),
-            "csv_count": csv_count,
+            "csv_count": len(csv_files),
+            "csv_files": csv_files,
+        }
+
+    def get_upload_stats(self) -> dict[str, Any]:
+        """Parse all CSV upload summary files and return aggregated stats.
+
+        Returns:
+            Dict with global totals and per-session detail including file rows.
+        """
+        from app.services.utils import format_file_size
+
+        log_dir = self._get_log_dir()
+        csv_dir = log_dir / "csv"
+
+        total_uploaded = 0
+        total_failed = 0
+        total_skipped = 0
+        total_bytes = 0
+        sessions: list[dict[str, Any]] = []
+
+        if not csv_dir.exists():
+            return {
+                "total_files_uploaded": 0,
+                "total_files_failed": 0,
+                "total_files_skipped": 0,
+                "total_bytes_uploaded": 0,
+                "total_sessions": 0,
+                "sessions": [],
+            }
+
+        for csv_file in sorted(csv_dir.rglob("*.csv"), reverse=True):
+            rel_path = str(csv_file.relative_to(log_dir))
+            date_str = self._extract_date_from_hive_path(csv_file) or ""
+
+            # Extract time from filename: upload-summary-HHMMSS-shortid.csv
+            fname = csv_file.stem  # e.g. upload-summary-143022-abcd1234
+            parts = fname.split("-")
+            time_str = ""
+            if len(parts) >= 3:
+                raw_time = parts[2]  # "143022"
+                if len(raw_time) == 6 and raw_time.isdigit():
+                    time_str = f"{raw_time[:2]}:{raw_time[2:4]}:{raw_time[4:6]}"
+
+            session_files: list[dict[str, Any]] = []
+            session_completed = 0
+            session_failed = 0
+            session_skipped = 0
+            session_bytes = 0
+            session_duration = 0.0
+
+            try:
+                with open(csv_file, encoding="utf-8", newline="") as fh:
+                    reader = csv.DictReader(fh)
+                    for row in reader:
+                        status = row.get("status", "")
+                        size_bytes = int(row.get("file_size_bytes", "0") or "0")
+                        duration = float(row.get("upload_duration_seconds", "0") or "0")
+                        speed = row.get("upload_speed_mbps", "")
+
+                        if status == "completed":
+                            session_completed += 1
+                            session_bytes += size_bytes
+                        elif status == "failed":
+                            session_failed += 1
+                        elif status == "skipped":
+                            session_skipped += 1
+
+                        session_duration += duration
+
+                        session_files.append({
+                            "filename": row.get("filename", ""),
+                            "file_size_formatted": row.get("file_size_formatted", ""),
+                            "status": status,
+                            "upload_speed_mbps": speed,
+                            "s3_path": row.get("s3_path", ""),
+                            "error_message": row.get("error_message", ""),
+                        })
+            except (OSError, csv.Error):
+                continue
+
+            total_uploaded += session_completed
+            total_failed += session_failed
+            total_skipped += session_skipped
+            total_bytes += session_bytes
+
+            avg_speed = 0.0
+            if session_duration > 0 and session_bytes > 0:
+                avg_speed = round(session_bytes / session_duration / 1024 / 1024 * 8, 1)
+
+            sessions.append({
+                "csv_path": rel_path,
+                "date": date_str,
+                "time": time_str,
+                "total_files": len(session_files),
+                "completed": session_completed,
+                "failed": session_failed,
+                "skipped": session_skipped,
+                "total_bytes": session_bytes,
+                "total_bytes_formatted": format_file_size(session_bytes),
+                "total_duration_seconds": round(session_duration, 1),
+                "avg_speed_mbps": avg_speed,
+                "files": session_files,
+            })
+
+        return {
+            "total_files_uploaded": total_uploaded,
+            "total_files_failed": total_failed,
+            "total_files_skipped": total_skipped,
+            "total_bytes_uploaded": total_bytes,
+            "total_bytes_uploaded_formatted": format_file_size(total_bytes),
+            "total_sessions": len(sessions),
+            "sessions": sessions,
         }
 
     def sync_logs_to_s3(
