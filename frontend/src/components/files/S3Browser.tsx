@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiGet } from "../../api/client.ts";
 import type { S3File, S3Folder, S3ListResponse } from "../../types/api.ts";
+import { CloudIcon } from "../../utils/icons.tsx";
 import Breadcrumb from "../common/Breadcrumb.tsx";
 import Spinner from "../common/Spinner.tsx";
 import FileList from "./FileList.tsx";
@@ -74,19 +75,7 @@ export default function S3Browser({ bucketName, region }: S3BrowserProps) {
       {/* Header: Bucket info + breadcrumb */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center gap-2 mb-2">
-          <svg
-            className="h-5 w-5 text-nlr-blue"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
-            />
-          </svg>
+          <CloudIcon className="h-5 w-5 text-nlr-blue" />
           <span className="text-sm text-gray-500">
             {bucketName}
             <span className="ml-2 text-xs text-gray-400">({region})</span>
