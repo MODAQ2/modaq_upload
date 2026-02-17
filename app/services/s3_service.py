@@ -6,8 +6,26 @@ from pathlib import Path
 from typing import Any
 
 import boto3
+from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import ClientError, NoCredentialsError
 from mypy_boto3_s3 import S3Client
+
+# Multipart threshold: files below this size are uploaded as a single PUT request,
+# which produces a simple MD5 ETag. Files above use multipart upload, which produces
+# a composite ETag (md5_of_part_md5s-part_count) that can't be compared to a local MD5.
+#
+# The Local Delete feature relies on MD5 ETag comparison for integrity verification
+# before deleting local files. Lowering this threshold means more files get multipart
+# ETags and fall back to size-only verification (still safe, but less thorough).
+#
+# Guidelines:
+#   < 100 MB files  → single-part fine, no multipart benefit
+#   100 MB – 1 GB   → single-part fine on stable connections
+#   1 – 5 GB        → multipart recommended (retry resilience)
+#   > 5 GB          → multipart required (S3 hard limit)
+#
+# Our MCAP files are typically 50-100 MB, so 1 GB is very conservative.
+TRANSFER_CONFIG = TransferConfig(multipart_threshold=1024 * 1024 * 1024)  # 1 GB
 
 
 def get_available_profiles() -> list[str]:
@@ -122,6 +140,7 @@ def upload_file_with_progress(
             Bucket=bucket,
             Key=key,
             Callback=progress,
+            Config=TRANSFER_CONFIG,
         )
 
         return {
