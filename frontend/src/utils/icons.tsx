@@ -26,6 +26,7 @@ import {
   RefreshCw,
   XCircle,
   Loader2,
+  Plus,
   type LucideProps,
 } from "lucide-react";
 
@@ -52,6 +53,7 @@ export const SettingsIcon = Settings;
 export const RefreshIcon = RefreshCw;
 export const XCircleIcon = XCircle;
 export const SpinnerIcon = Loader2;
+export const PlusIcon = Plus;
 
 // Export type for icon props
 export type { LucideProps as IconProps };
