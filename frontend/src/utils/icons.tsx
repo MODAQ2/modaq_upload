@@ -1,0 +1,64 @@
+/**
+ * Icon exports using lucide-react.
+ * Centralized icon library for consistent styling across the app.
+ */
+
+import {
+  File,
+  Folder,
+  Check,
+  ChevronRight,
+  X,
+  AlertTriangle,
+  AlertCircle,
+  Info,
+  CheckCircle,
+  ChevronUp,
+  ChevronDown,
+  Shield,
+  Upload,
+  Download,
+  Search,
+  Filter,
+  MoreVertical,
+  Trash2,
+  Settings,
+  RefreshCw,
+  XCircle,
+  type LucideProps,
+} from "lucide-react";
+
+// Re-export with consistent names
+export const FileIcon = File;
+export const FolderIcon = Folder;
+export const CheckIcon = Check;
+export const ChevronRightIcon = ChevronRight;
+export const XIcon = X;
+export const WarningIcon = AlertTriangle;
+export const ErrorIcon = AlertCircle;
+export const InfoIcon = Info;
+export const SuccessIcon = CheckCircle;
+export const ChevronUpIcon = ChevronUp;
+export const ChevronDownIcon = ChevronDown;
+export const ShieldIcon = Shield;
+export const UploadIcon = Upload;
+export const DownloadIcon = Download;
+export const SearchIcon = Search;
+export const FilterIcon = Filter;
+export const MoreIcon = MoreVertical;
+export const TrashIcon = Trash2;
+export const SettingsIcon = Settings;
+export const RefreshIcon = RefreshCw;
+export const XCircleIcon = XCircle;
+
+// Export type for icon props
+export type { LucideProps as IconProps };
+
+// Default icon size classes
+export const iconSizes = {
+  xs: "w-3 h-3",
+  sm: "w-4 h-4",
+  md: "w-5 h-5",
+  lg: "w-6 h-6",
+  xl: "w-8 h-8",
+} as const;
