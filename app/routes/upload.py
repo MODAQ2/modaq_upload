@@ -455,11 +455,17 @@ def scan_folder_async() -> tuple[Response, int]:
         return jsonify({"error": f"Path is not a directory: {folder_path}"}), 400
 
     cache_only: bool = data.get("cache_only", False)
+    excluded_subfolders: list[str] = data.get("excluded_subfolders", [])
+    excluded_files: list[str] = data.get("excluded_files", [])
 
     settings = get_settings()
     manager = get_upload_manager()
 
-    scan_job = manager.create_scan_job(str(folder_path.absolute()))
+    scan_job = manager.create_scan_job(
+        str(folder_path.absolute()),
+        excluded_subfolders=excluded_subfolders,
+        excluded_files=excluded_files,
+    )
 
     def scan_progress_callback(job_id: str, event_data: dict[str, Any]) -> None:
         send_sse_event(job_id, event_data)
