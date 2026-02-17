@@ -25,6 +25,7 @@ def create_app() -> Flask:
         return {"display_name": settings.display_name}
 
     # Register blueprints
+    from app.routes.delete import delete_bp
     from app.routes.files import files_bp
     from app.routes.logs import logs_bp
     from app.routes.main import main_bp
@@ -36,6 +37,7 @@ def create_app() -> Flask:
     app.register_blueprint(files_bp, url_prefix="/api/files")
     app.register_blueprint(settings_bp, url_prefix="/api/settings")
     app.register_blueprint(logs_bp, url_prefix="/api/logs")
+    app.register_blueprint(delete_bp, url_prefix="/api/delete")
 
     # Log application startup
     from app.services.log_service import get_log_service
