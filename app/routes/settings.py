@@ -192,10 +192,7 @@ def run_update() -> tuple[Response, int]:
     result = updater.update_application()
 
     # Determine overall success
-    all_success = all(
-        step["success"]
-        for step in [result["git_pull"], result["pip_install"], result["modaq_toolkit"]]
-    )
+    all_success = all(step["success"] for step in result.values())
 
     return jsonify(
         {
