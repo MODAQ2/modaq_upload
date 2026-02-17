@@ -6,6 +6,7 @@ from flask import Blueprint, Response, g, jsonify, request
 
 from app.config import get_settings
 from app.services import s3_service
+from app.services.cache_service import get_cache_service
 
 files_bp = Blueprint("files", __name__)
 
@@ -163,12 +164,16 @@ def browse_local() -> tuple[Response, int]:
     Returns:
         JSON response with folders, files, and navigation info
     """
-    # Get requested path, default to home directory
+    # Get requested path, default to configured upload folder or home directory
     requested_path = request.args.get("path", "")
 
     if not requested_path:
-        # Default to home directory
-        requested_path = str(Path.home())
+        settings = get_settings()
+        default_folder = settings.default_upload_folder
+        if default_folder and Path(default_folder).is_dir():
+            requested_path = default_folder
+        else:
+            requested_path = str(Path.home())
 
     path = Path(requested_path)
 
@@ -189,50 +194,81 @@ def browse_local() -> tuple[Response, int]:
     if not path.is_dir():
         return jsonify({"error": f"Not a directory: {path}"}), 400
 
-    # Build response
-    folders: list[dict[str, str | int]] = []
-    files: list[dict[str, str | int | float]] = []
+    # Build response — single-pass rglob for recursive MCAP counts + cache checks
+    cache = get_cache_service()
+    bucket = g.settings.s3_bucket
+
+    folder_mcap_counts: dict[str, int] = {}
+    folder_uploaded_counts: dict[str, int] = {}
+    files: list[dict[str, str | int | float | bool]] = []
     mcap_count = 0
+    direct_uploaded = 0
 
     try:
-        for entry in sorted(path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-            # Skip hidden files/folders (starting with .)
-            if entry.name.startswith("."):
+        for mcap_path in path.rglob("*.mcap"):
+            # Skip hidden paths (any component starting with .)
+            if any(part.startswith(".") for part in mcap_path.relative_to(path).parts):
                 continue
 
+            # Check cache for already-uploaded status
+            try:
+                file_stat = mcap_path.stat()
+                uploaded = cache.check_exists_by_filename(
+                    bucket, mcap_path.name, file_stat.st_size
+                ) is True
+            except PermissionError:
+                continue
+
+            rel = mcap_path.relative_to(path)
+            parts = rel.parts
+            if len(parts) == 1:
+                # Direct child MCAP file
+                mcap_count += 1
+                if uploaded:
+                    direct_uploaded += 1
+                files.append(
+                    {
+                        "name": mcap_path.name,
+                        "path": str(mcap_path),
+                        "size": file_stat.st_size,
+                        "mtime": file_stat.st_mtime,
+                        "already_uploaded": uploaded,
+                    }
+                )
+            else:
+                # Nested — attribute to the immediate subfolder
+                folder_name = parts[0]
+                folder_mcap_counts[folder_name] = folder_mcap_counts.get(folder_name, 0) + 1
+                if uploaded:
+                    folder_uploaded_counts[folder_name] = (
+                        folder_uploaded_counts.get(folder_name, 0) + 1
+                    )
+    except PermissionError:
+        return jsonify({"error": f"Permission denied: {path}"}), 403
+
+    # Build folder list from direct children (non-hidden directories)
+    folders: list[dict[str, str | int]] = []
+    try:
+        for entry in sorted(path.iterdir(), key=lambda x: x.name.lower()):
+            if entry.name.startswith("."):
+                continue
             try:
                 if entry.is_dir():
-                    # Count MCAP files in this folder (non-recursive, for preview)
-                    try:
-                        mcap_in_folder = sum(1 for f in entry.iterdir() if f.suffix == ".mcap")
-                    except PermissionError:
-                        mcap_in_folder = 0
-
                     folders.append(
                         {
                             "name": entry.name,
                             "path": str(entry),
-                            "mcap_count": mcap_in_folder,
+                            "mcap_count": folder_mcap_counts.get(entry.name, 0),
+                            "already_uploaded": folder_uploaded_counts.get(entry.name, 0),
                         }
                     )
-                elif entry.is_file():
-                    if entry.suffix == ".mcap":
-                        mcap_count += 1
-                        file_stat = entry.stat()
-                        files.append(
-                            {
-                                "name": entry.name,
-                                "path": str(entry),
-                                "size": file_stat.st_size,
-                                "mtime": file_stat.st_mtime,
-                            }
-                        )
             except PermissionError:
-                # Skip entries we can't access
                 continue
-
     except PermissionError:
         return jsonify({"error": f"Permission denied: {path}"}), 403
+
+    # Sort files by name
+    files.sort(key=lambda f: str(f["name"]).lower())
 
     # Build breadcrumbs for navigation
     breadcrumbs: list[dict[str, str]] = []
@@ -269,5 +305,7 @@ def browse_local() -> tuple[Response, int]:
             "folders": folders,
             "files": files,  # Only MCAP files
             "mcap_count": mcap_count,
+            "total_mcap_count": mcap_count + sum(folder_mcap_counts.values()),
+            "already_uploaded": direct_uploaded + sum(folder_uploaded_counts.values()),
         }
     ), 200
