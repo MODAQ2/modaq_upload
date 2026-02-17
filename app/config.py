@@ -241,11 +241,19 @@ class AppUpdater:
             "git_pull": {"success": False, "output": ""},
             "pip_install": {"success": False, "output": ""},
             "modaq_toolkit": {"success": False, "output": ""},
+            "npm_install": {"success": False, "output": ""},
+            "frontend_build": {"success": False, "output": ""},
         }
 
-        steps: list[tuple[str, list[str]]] = [
-            ("git_pull", ["git", "pull"]),
-            ("pip_install", [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]),
+        frontend_dir = str(self.base_dir / "frontend")
+
+        steps: list[tuple[str, list[str], str | None]] = [
+            ("git_pull", ["git", "pull"], None),
+            (
+                "pip_install",
+                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+                None,
+            ),
             (
                 "modaq_toolkit",
                 [
@@ -257,14 +265,17 @@ class AppUpdater:
                     "--force-reinstall",
                     "git+https://github.com/MODAQ2/MODAQ_toolkit.git",
                 ],
+                None,
             ),
+            ("npm_install", ["npm", "install"], frontend_dir),
+            ("frontend_build", ["npm", "run", "build"], frontend_dir),
         ]
 
-        for step_name, cmd in steps:
+        for step_name, cmd, cwd in steps:
             try:
                 result = subprocess.run(
                     cmd,
-                    cwd=self.base_dir,
+                    cwd=cwd or self.base_dir,
                     capture_output=True,
                     text=True,
                     check=True,
