@@ -102,58 +102,6 @@ def get_file_info() -> tuple[Response, int]:
         return jsonify({"error": str(e)}), 500
 
 
-@files_bp.route("/search", methods=["GET"])
-def search_files() -> tuple[Response, int]:
-    """Search for files in S3 bucket by name pattern.
-
-    Query parameters:
-        query: Search query string
-        prefix: S3 prefix to search within (default: "")
-
-    Returns:
-        JSON response with matching files
-    """
-    query = request.args.get("query", "").lower()
-    prefix = request.args.get("prefix", "")
-
-    if not query:
-        return jsonify({"error": "Search query required"}), 400
-
-    try:
-        client = s3_service.create_s3_client(
-            g.settings.aws_profile,
-            g.settings.aws_region,
-        )
-
-        # List all objects with prefix (no delimiter to get all files)
-        result = s3_service.list_bucket_objects(
-            client,
-            g.settings.s3_bucket,
-            prefix=prefix,
-            delimiter="",  # No delimiter to get all nested files
-            max_keys=10000,
-        )
-
-        if not result["success"]:
-            return jsonify({"error": result["error"]}), 500
-
-        # Filter files by query
-        matching_files = [f for f in result["files"] if query in f["name"].lower()]
-
-        return jsonify(
-            {
-                "success": True,
-                "query": query,
-                "prefix": prefix,
-                "files": matching_files[:100],  # Limit results
-                "total_matches": len(matching_files),
-            }
-        ), 200
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 @files_bp.route("/browse", methods=["GET"])
 def browse_local() -> tuple[Response, int]:
     """Browse local filesystem for folder selection.

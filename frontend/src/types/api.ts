@@ -246,14 +246,6 @@ export interface S3Breadcrumb {
   prefix: string;
 }
 
-export interface S3SearchResponse {
-  success: boolean;
-  query: string;
-  prefix: string;
-  files: S3File[];
-  total_matches: number;
-}
-
 // ── Settings types ──
 
 export interface AppSettings {
