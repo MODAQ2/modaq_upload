@@ -79,6 +79,18 @@ def get_log_stats() -> tuple[Response, int]:
     return jsonify(stats), 200
 
 
+@logs_bp.route("/upload-stats", methods=["GET"])
+def get_upload_stats() -> tuple[Response, int]:
+    """Get aggregated upload statistics from CSV summaries.
+
+    Returns:
+        JSON with global totals and per-session detail including file rows.
+    """
+    log = get_log_service()
+    stats = log.get_upload_stats()
+    return jsonify(stats), 200
+
+
 @logs_bp.route("/sync", methods=["POST"])
 def sync_logs() -> tuple[Response, int]:
     """Trigger S3 sync of log files.
