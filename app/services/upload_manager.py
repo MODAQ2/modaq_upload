@@ -294,6 +294,8 @@ class ScanJob:
     total_already_uploaded: int = 0
     total_size: int = 0
     scanned_folders: list[dict[str, Any]] = field(default_factory=list)
+    excluded_subfolders: list[str] = field(default_factory=list)
+    excluded_files: list[str] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -1150,17 +1152,29 @@ class UploadManager:
         stats["file_statuses"] = file_statuses
         return files_to_analyze, stats
 
-    def create_scan_job(self, folder_path: str) -> ScanJob:
+    def create_scan_job(
+        self,
+        folder_path: str,
+        excluded_subfolders: list[str] | None = None,
+        excluded_files: list[str] | None = None,
+    ) -> ScanJob:
         """Create a new scan job for a folder.
 
         Args:
             folder_path: Root folder to scan
+            excluded_subfolders: Subfolder names to exclude from scan
+            excluded_files: Root-level filenames to exclude from scan
 
         Returns:
             The created ScanJob
         """
         job_id = str(uuid.uuid4())
-        scan_job = ScanJob(job_id=job_id, root_folder=folder_path)
+        scan_job = ScanJob(
+            job_id=job_id,
+            root_folder=folder_path,
+            excluded_subfolders=excluded_subfolders or [],
+            excluded_files=excluded_files or [],
+        )
         with self._lock:
             self.scan_jobs[job_id] = scan_job
         return scan_job
@@ -1211,12 +1225,24 @@ class UploadManager:
         log = get_log_service()
 
         try:
+            # Build exclusion sets for fast lookup
+            excluded_subs_set = set(scan_job.excluded_subfolders)
+            excluded_files_set = set(scan_job.excluded_files)
+
             # Phase 1: Enumerate subfolders containing .mcap files (fast, metadata only)
             folder_map: dict[str, list[Path]] = {}
             for mcap_path in root.rglob("*.mcap"):
                 if scan_job.cancelled:
                     break
                 if mcap_path.is_file():
+                    rel = mcap_path.relative_to(root)
+                    parts = rel.parts
+                    # Skip root-level files in excluded_files list
+                    if len(parts) == 1 and parts[0] in excluded_files_set:
+                        continue
+                    # Skip files under excluded subfolders
+                    if len(parts) > 1 and parts[0] in excluded_subs_set:
+                        continue
                     parent = str(mcap_path.parent)
                     if parent not in folder_map:
                         folder_map[parent] = []
