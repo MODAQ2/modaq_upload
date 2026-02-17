@@ -10,22 +10,22 @@ class TestMainRoutes:
     """Tests for main page routes."""
 
     def test_index_page(self, client: FlaskClient) -> None:
-        """Test that index page loads successfully."""
+        """Test that index page serves the React SPA shell."""
         response = client.get("/")
         assert response.status_code == 200
-        assert b"Upload MCAP Files" in response.data
+        assert b'<div id="root">' in response.data
 
     def test_files_page(self, client: FlaskClient) -> None:
-        """Test that files page loads successfully."""
+        """Test that files page serves the React SPA shell."""
         response = client.get("/files")
         assert response.status_code == 200
-        assert b"S3 File Browser" in response.data
+        assert b'<div id="root">' in response.data
 
     def test_settings_page(self, client: FlaskClient) -> None:
-        """Test that settings page loads successfully."""
+        """Test that settings page serves the React SPA shell."""
         response = client.get("/settings")
         assert response.status_code == 200
-        assert b"Settings" in response.data
+        assert b'<div id="root">' in response.data
 
 
 class TestSettingsAPI:
@@ -252,10 +252,10 @@ class TestLogsAPI:
     """Tests for logs API endpoints."""
 
     def test_logs_page(self, client: FlaskClient) -> None:
-        """Test that logs page loads successfully."""
+        """Test that logs page serves the React SPA shell."""
         response = client.get("/logs")
         assert response.status_code == 200
-        assert b"Application Logs" in response.data
+        assert b'<div id="root">' in response.data
 
     def test_get_entries(self, client: FlaskClient) -> None:
         """Test getting log entries."""
