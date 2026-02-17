@@ -10,6 +10,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { formatBytes } from "../../utils/format/bytes.ts";
 import { formatDate } from "../../utils/format/date.ts";
+import { SpinnerIcon, CheckIcon, XIcon, MinusIcon, CircleIcon } from "../../utils/icons.tsx";
 import type {
   SortDir,
   SortKey,
@@ -290,33 +291,16 @@ const FileRow = memo(function FileRow({
 function StatusIcon({ status }: { status: UnifiedStatus }) {
   switch (status) {
     case "in_progress":
-      return (
-        <svg className="w-4 h-4 text-nlr-blue spinner" viewBox="0 0 24 24" fill="none">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-      );
+      return <SpinnerIcon className="w-4 h-4 text-nlr-blue animate-spin" />;
     case "completed":
-      return (
-        <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-        </svg>
-      );
+      return <CheckIcon className="w-4 h-4 text-green-500" strokeWidth={2.5} />;
     case "failed":
-      return (
-        <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      );
+      return <XIcon className="w-4 h-4 text-red-500" strokeWidth={2.5} />;
     case "skipped":
-      return (
-        <svg className="w-4 h-4 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 12h14" />
-        </svg>
-      );
+      return <MinusIcon className="w-4 h-4 text-yellow-500" strokeWidth={2.5} />;
     default:
       // queued, new, already_uploaded
-      return <span className="w-4 h-4 rounded-full border-2 border-gray-300 block" />;
+      return <CircleIcon className="w-4 h-4 text-gray-300" strokeWidth={2} />;
   }
 }
 
