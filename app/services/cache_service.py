@@ -240,6 +240,47 @@ class CacheService:
 
         conn.commit()
 
+    def get_uploaded_file_info(
+        self,
+        bucket: str,
+        filename: str,
+        file_size: int,
+    ) -> dict[str, str | int] | None:
+        """Look up a cached upload entry by filename and size.
+
+        Returns the S3 path and file metadata for files where file_exists=1.
+        Used by the delete feature to cross-reference local files with S3 uploads.
+
+        Args:
+            bucket: S3 bucket name
+            filename: Original filename
+            file_size: File size in bytes
+
+        Returns:
+            Dict with s3_path, filename, file_size if found, else None
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT s3_path, filename, file_size FROM s3_files
+            WHERE bucket = ? AND filename = ? AND file_size = ? AND file_exists = 1
+            LIMIT 1
+            """,
+            (bucket, filename, file_size),
+        )
+
+        row = cursor.fetchone()
+        if row is None:
+            return None
+
+        return {
+            "s3_path": row["s3_path"],
+            "filename": row["filename"],
+            "file_size": row["file_size"],
+        }
+
     def invalidate_bucket(self, bucket: str) -> int:
         """Invalidate all cache entries for a bucket.
 
