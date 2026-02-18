@@ -11,10 +11,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import ProgressBar from "../components/common/ProgressBar.tsx";
+import Spinner from "../components/common/Spinner.tsx";
 import StatCard from "../components/common/StatCard.tsx";
 import DeleteConfirmation from "../components/delete/DeleteConfirmation.tsx";
 import DeleteStepper from "../components/delete/DeleteStepper.tsx";
+import CancelConfirmModal from "../components/upload/CancelConfirmModal.tsx";
 import FolderBrowser from "../components/upload/FolderBrowser.tsx";
+import type { FolderExclusions } from "../components/upload/FolderBrowser.tsx";
 import { useDeleteJob } from "../hooks/useDeleteJob.ts";
 import { useDeleteScan } from "../hooks/useDeleteScan.ts";
 import { useAppStore } from "../stores/appStore.ts";
@@ -73,14 +76,16 @@ export default function DeletePage() {
   // Pagination for file table
   const [page, setPage] = useState(0);
   const pageSize = 50;
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // ── Step transitions ──
 
   const handleFolderSelected = useCallback(
-    async (path: string) => {
+    async (path: string, exclusions?: FolderExclusions) => {
       setFolderPath(path);
       setStep(2);
-      await scan(path);
+      await scan(path, exclusions);
     },
     [setFolderPath, setStep, scan],
   );
@@ -90,6 +95,15 @@ export default function DeletePage() {
     await deleteJob.startDelete();
   }, [setStep, deleteJob]);
 
+  const handleCancelClick = useCallback(() => {
+    setShowCancelModal(true);
+  }, []);
+
+  const handleConfirmCancel = useCallback(async () => {
+    setShowCancelModal(false);
+    await deleteJob.cancelDelete();
+  }, [deleteJob]);
+
   // Auto-advance from Step 4 to Step 5 when deletion completes
   useEffect(() => {
     if (step === 4 && !deleteJob.isRunning && completedJob) {
@@ -98,8 +112,13 @@ export default function DeletePage() {
   }, [step, deleteJob.isRunning, completedJob, setStep]);
 
   const handleStartOver = useCallback(() => {
+    const previousPath = folderPath;
     reset();
-  }, [reset]);
+    // Preserve the folder path so the browser reopens at the same location
+    if (previousPath) setFolderPath(previousPath);
+    // Bump key to force FolderBrowser to re-mount with fresh data
+    setRefreshKey((k) => k + 1);
+  }, [reset, folderPath, setFolderPath]);
 
   const handleBack = useCallback(() => {
     if (step === 2) {
@@ -149,6 +168,7 @@ export default function DeletePage() {
       {/* Step 1: Folder Selection */}
       {step === 1 && (
         <FolderBrowser
+          key={refreshKey}
           onFolderSelected={handleFolderSelected}
           initialPath={folderPath || defaultUploadFolder || undefined}
           mode="delete"
@@ -196,7 +216,7 @@ export default function DeletePage() {
                         Size
                       </th>
                       <th className="text-left px-4 py-2 font-medium text-gray-600">
-                        S3 Path
+                        Cloud Path
                       </th>
                     </tr>
                   </thead>
@@ -311,20 +331,42 @@ export default function DeletePage() {
             percent={progressPercent}
             label={
               deleteJob.jobStatus === "verifying"
-                ? "Verifying files against S3..."
+                ? "Verifying files against cloud storage..."
                 : deleteJob.jobStatus === "deleting"
                   ? "Clearing verified files..."
                   : "Processing..."
             }
           />
 
-          <button
-            type="button"
-            onClick={deleteJob.cancelDelete}
-            className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100"
-          >
-            Cancel
-          </button>
+          {!deleteJob.isCancelling && (
+            <button
+              type="button"
+              onClick={handleCancelClick}
+              className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100"
+            >
+              Cancel
+            </button>
+          )}
+
+          {/* Cancel confirmation modal */}
+          <CancelConfirmModal
+            isOpen={showCancelModal}
+            onClose={() => setShowCancelModal(false)}
+            onConfirm={handleConfirmCancel}
+            filesProcessed={deleteJob.filesProcessed}
+            totalFiles={deleteJob.totalFiles}
+          />
+
+          {/* Cancelling overlay */}
+          {deleteJob.isCancelling && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm">
+              <div className="bg-white rounded-lg shadow-xl px-8 py-6 flex flex-col items-center gap-3">
+                <Spinner />
+                <p className="text-sm font-medium text-gray-700">Cancelling...</p>
+                <p className="text-xs text-gray-500">Waiting for in-progress operations to finish.</p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
