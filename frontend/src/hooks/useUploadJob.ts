@@ -130,14 +130,15 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
           case "analysis_complete": {
             const evt = data as AnalysisCompleteEvent;
             setTotalFiles(evt.job.total_files);
-            // If not auto-uploading, this is terminal.
             if (!evt.auto_upload) {
+              // Analysis-only mode — this is terminal.
               setIsRunning(false);
               setJobId(null);
               setCompletedJob(evt.job);
+              setActiveFiles([]);
             }
-            // Clear active files from analysis phase.
-            setActiveFiles([]);
+            // When auto_upload is true, don't clear activeFiles — uploads
+            // may already be in progress via the pipeline.
             break;
           }
 

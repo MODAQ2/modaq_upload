@@ -483,10 +483,12 @@ def scan_folder_async() -> tuple[Response, int]:
     thread = threading.Thread(target=run_scan, daemon=True)
     thread.start()
 
-    return jsonify({
-        "job_id": scan_job.job_id,
-        "status": "scanning",
-    }), 202
+    return jsonify(
+        {
+            "job_id": scan_job.job_id,
+            "status": "scanning",
+        }
+    ), 202
 
 
 @upload_bp.route("/bulk-analyze", methods=["POST"])
@@ -551,50 +553,41 @@ def bulk_analyze() -> tuple[Response, int]:
         else:
             send_sse_event(job.job_id, job.to_progress_dict())
 
-    # Start analysis in background thread
-    def run_bulk_analysis() -> None:
-        manager.analyze_job_async(
-            job.job_id,
-            settings.aws_profile,
-            settings.aws_region,
-            settings.s3_bucket,
-            progress_callback=analysis_progress_callback,
-        )
-
-        # Send analysis complete event
-        final_job = manager.get_job(job.job_id)
-        if final_job:
-            send_sse_event(
+    # Start in background thread
+    def run_bulk_job() -> None:
+        if auto_upload:
+            # Pipeline: analyze each file and upload immediately as it's ready.
+            # Uploads start flowing while remaining files are still being parsed.
+            manager.analyze_and_upload_pipeline(
                 job.job_id,
-                {
-                    "type": "analysis_complete",
-                    "job": final_job.to_dict(),
-                    "auto_upload": final_job.auto_upload,
-                },
+                settings.aws_profile,
+                settings.aws_region,
+                settings.s3_bucket,
+                skip_duplicates=skip_duplicates,
+                analysis_callback=analysis_progress_callback,
+                upload_callback=upload_progress_callback,
             )
-
-            # Auto-upload if enabled and analysis succeeded
-            if final_job.auto_upload and final_job.status == UploadStatus.READY:
+        else:
+            # Analysis only — user will review results before starting upload.
+            manager.analyze_job_async(
+                job.job_id,
+                settings.aws_profile,
+                settings.aws_region,
+                settings.s3_bucket,
+                progress_callback=analysis_progress_callback,
+            )
+            final_job = manager.get_job(job.job_id)
+            if final_job:
                 send_sse_event(
                     job.job_id,
                     {
-                        "type": "auto_upload_starting",
-                        "job_id": job.job_id,
+                        "type": "analysis_complete",
+                        "job": final_job.to_dict(),
+                        "auto_upload": False,
                     },
                 )
-                manager.start_upload(
-                    job.job_id,
-                    settings.aws_profile,
-                    settings.aws_region,
-                    settings.s3_bucket,
-                    skip_duplicates=skip_duplicates,
-                    progress_callback=upload_progress_callback,
-                )
-            elif final_job.auto_upload:
-                # All files failed analysis — send terminal status so frontend doesn't hang
-                send_sse_event(job.job_id, final_job.to_dict())
 
-    thread = threading.Thread(target=run_bulk_analysis, daemon=True)
+    thread = threading.Thread(target=run_bulk_job, daemon=True)
     thread.start()
 
     return jsonify(
