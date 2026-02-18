@@ -1226,6 +1226,12 @@ class UploadManager:
                                     },
                                 )
 
+                            # Notify per-file status so the frontend
+                            # updates this row immediately (the progress
+                            # dict only includes active files, so without
+                            # this the row would keep spinning).
+                            if analysis_callback:
+                                analysis_callback(job, file_state)
                             if upload_callback:
                                 upload_callback(job)
                             return None

@@ -144,9 +144,9 @@ function UploadingHeader({
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-gray-900">
-            {isRunning ? "Uploading..." : "Upload Complete"}
+            {isRunning && filesProcessed < totalFiles ? "Uploading..." : "Upload Complete"}
           </h3>
-          {isRunning && <Spinner size="sm" />}
+          {isRunning && filesProcessed < totalFiles && <Spinner size="sm" />}
         </div>
 
         <ProgressBar
