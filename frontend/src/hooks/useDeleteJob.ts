@@ -32,6 +32,7 @@ interface UseDeleteJobResult {
   statusCounts: StatusCounts;
   totalDeletedSize: number;
   isRunning: boolean;
+  isCancelling: boolean;
   jobStatus: string;
 }
 
@@ -72,6 +73,7 @@ export function useDeleteJob(): UseDeleteJobResult {
   });
   const [totalDeletedSize, setTotalDeletedSize] = useState(0);
   const [jobStatus, setJobStatus] = useState("pending");
+  const [isCancelling, setIsCancelling] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   const { deleteJobId, setCompletedJob, setIsDeleting } = useDeleteStore();
@@ -99,6 +101,7 @@ export function useDeleteJob(): UseDeleteJobResult {
         setTotalDeletedSize(c.total_deleted_size);
         setJobStatus(c.status);
         setIsRunning(false);
+        setIsCancelling(false);
         setIsDeleting(false);
         setActiveJobId(null);
         setCompletedJob(c as unknown as DeleteJobResult);
@@ -122,6 +125,7 @@ export function useDeleteJob(): UseDeleteJobResult {
     onError: () => {
       if (isRunning) {
         setIsRunning(false);
+        setIsCancelling(false);
         setIsDeleting(false);
         setActiveJobId(null);
       }
@@ -141,6 +145,7 @@ export function useDeleteJob(): UseDeleteJobResult {
     });
     setTotalDeletedSize(0);
     setJobStatus("verifying");
+    setIsCancelling(false);
     setIsRunning(true);
     setIsDeleting(true);
 
@@ -153,18 +158,20 @@ export function useDeleteJob(): UseDeleteJobResult {
     }
   }, [deleteJobId, setIsDeleting]);
 
+  /** Cancel the delete job. SSE terminal event handles cleanup. */
   const cancelDelete = useCallback(async () => {
     const jobId = useDeleteStore.getState().deleteJobId;
-    if (jobId) {
-      try {
-        await apiPost(`/api/delete/cancel/${jobId}`);
-      } catch {
-        // Ignore
-      }
+    if (!jobId) return;
+    setIsCancelling(true);
+    try {
+      await apiPost(`/api/delete/cancel/${jobId}`);
+    } catch {
+      // If cancel request fails, force-close
+      setIsRunning(false);
+      setIsCancelling(false);
+      setIsDeleting(false);
+      setActiveJobId(null);
     }
-    setIsRunning(false);
-    setIsDeleting(false);
-    setActiveJobId(null);
   }, [setIsDeleting]);
 
   return {
@@ -175,6 +182,7 @@ export function useDeleteJob(): UseDeleteJobResult {
     statusCounts,
     totalDeletedSize,
     isRunning,
+    isCancelling,
     jobStatus,
   };
 }
