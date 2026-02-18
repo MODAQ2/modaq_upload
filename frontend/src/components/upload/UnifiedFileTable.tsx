@@ -1,16 +1,16 @@
 /**
  * Unified file table that persists across Review / Upload / Summary phases.
  *
- * Fixed 6-column grid — column content adapts per phase, but layout is stable.
+ * Fixed 7-column grid — column content adapts per phase, but layout is stable.
  * Uses @tanstack/react-virtual for 20K+ file handling.
  */
 
-import { memo, useCallback, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { formatBytes } from "../../utils/format/bytes.ts";
 import { formatDate } from "../../utils/format/date.ts";
-import { SpinnerIcon, CheckIcon, XIcon, MinusIcon, CircleIcon } from "../../utils/icons.tsx";
+import { SpinnerIcon, CheckIcon, XIcon, MinusIcon, CircleIcon, ChevronDownIcon } from "../../utils/icons.tsx";
 import type {
   SortDir,
   SortKey,
@@ -20,8 +20,16 @@ import type {
 } from "../../types/upload.ts";
 // ── Grid template (fixed across all phases) ──
 
-const GRID_COLS = "grid-cols-[36px_1fr_1fr_80px_120px_1fr]";
+const GRID_COLS = "grid-cols-[42px_36px_1fr_1fr_80px_120px_1fr]";
 const ROW_HEIGHT = 40;
+
+// Row background colors by status (uploading + summary phases only)
+const STATUS_ROW_BG: Record<string, string> = {
+  completed: "bg-green-50/70",
+  failed: "bg-red-50/70",
+  skipped: "bg-yellow-50/50",
+  in_progress: "bg-blue-50/60",
+};
 
 // ── Props ──
 
@@ -73,17 +81,31 @@ export default function UnifiedFileTable({
     prevCountRef.current = files.length;
   }, [files.length, rowVirtualizer]);
 
-  const scrollToActive = useCallback(() => {
-    const idx = files.findIndex(
-      (f) => f.status === "in_progress",
-    );
+  // ── Auto-scroll: follow the active file during upload ──
+
+  const [autoFollow, setAutoFollow] = useState(true);
+  const lastActivePathRef = useRef<string | null>(null);
+
+  // Reset auto-follow when entering upload phase
+  const prevPhaseRef = useRef(phase);
+  if (phase === "uploading" && prevPhaseRef.current !== "uploading") {
+    setAutoFollow(true);
+    lastActivePathRef.current = null;
+  }
+  prevPhaseRef.current = phase;
+
+  useEffect(() => {
+    if (phase !== "uploading" || !autoFollow) return;
+
+    const activeFile = files.find((f) => f.status === "in_progress");
+    if (!activeFile || activeFile.path === lastActivePathRef.current) return;
+
+    lastActivePathRef.current = activeFile.path;
+    const idx = files.indexOf(activeFile);
     if (idx >= 0) {
       rowVirtualizer.scrollToIndex(idx, { align: "center" });
     }
-  }, [files, rowVirtualizer]);
-
-  // Count active files for the "jump to active" button
-  const hasActiveFiles = phase === "uploading" && files.some((f) => f.status === "in_progress");
+  }, [phase, autoFollow, files, rowVirtualizer]);
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden relative">
@@ -91,7 +113,10 @@ export default function UnifiedFileTable({
       <div
         className={`grid ${GRID_COLS} gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wider`}
       >
-        {/* Col 1: Checkbox / Status icon */}
+        {/* Col 1: Row number */}
+        <div className="text-center">#</div>
+
+        {/* Col 2: Checkbox / Status icon */}
         <div className="flex items-center justify-center">
           {phase === "review" ? (
             <IndeterminateCheckbox
@@ -104,7 +129,7 @@ export default function UnifiedFileTable({
           )}
         </div>
 
-        {/* Col 2: Filename */}
+        {/* Col 3: Filename */}
         <SortHeader
           label="Filename"
           sortKey="filename"
@@ -114,7 +139,7 @@ export default function UnifiedFileTable({
           disabled={isSortFrozen}
         />
 
-        {/* Col 3: Folder */}
+        {/* Col 4: Folder */}
         <SortHeader
           label="Folder"
           sortKey="folder"
@@ -124,7 +149,7 @@ export default function UnifiedFileTable({
           disabled={isSortFrozen}
         />
 
-        {/* Col 4: Size */}
+        {/* Col 5: Size */}
         <SortHeader
           label="Size"
           sortKey="size"
@@ -135,7 +160,7 @@ export default function UnifiedFileTable({
           className="justify-end"
         />
 
-        {/* Col 5: Status */}
+        {/* Col 6: Status */}
         <SortHeader
           label="Status"
           sortKey="status"
@@ -146,7 +171,7 @@ export default function UnifiedFileTable({
           className="justify-center"
         />
 
-        {/* Col 6: Detail (context-dependent) */}
+        {/* Col 7: Detail (context-dependent) */}
         <div>
           {phase === "review" && "Modified"}
           {phase === "uploading" && ""}
@@ -178,6 +203,7 @@ export default function UnifiedFileTable({
                 <FileRow
                   key={file.path}
                   row={file}
+                  rowNumber={virtualRow.index + 1}
                   phase={phase}
                   isSelected={selectedPaths.has(file.path)}
                   onToggle={onToggleFile}
@@ -201,16 +227,20 @@ export default function UnifiedFileTable({
         {files.length.toLocaleString()} file{files.length !== 1 ? "s" : ""}
       </div>
 
-      {/* Jump to active button (upload phase only) */}
-      {hasActiveFiles && (
+      {/* Auto-scroll toggle (upload phase only) */}
+      {phase === "uploading" && (
         <button
           type="button"
-          onClick={scrollToActive}
-          className="absolute bottom-12 right-4 px-3 py-1.5 text-xs font-medium
-            bg-nlr-blue text-white rounded-full shadow-lg hover:bg-blue-700
-            transition-colors z-10"
+          onClick={() => setAutoFollow((prev) => !prev)}
+          className={`absolute bottom-12 right-4 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
+            rounded-full shadow-lg transition-colors z-10 ${
+              autoFollow
+                ? "bg-nlr-blue text-white hover:bg-blue-700"
+                : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+            }`}
         >
-          Jump to active
+          <ChevronDownIcon className="w-3.5 h-3.5" />
+          {autoFollow ? "Following active" : "Auto-scroll off"}
         </button>
       )}
     </div>
@@ -221,6 +251,7 @@ export default function UnifiedFileTable({
 
 interface FileRowProps {
   row: UnifiedFileRow;
+  rowNumber: number;
   phase: UploadPhase;
   isSelected: boolean;
   onToggle: (path: string) => void;
@@ -229,17 +260,25 @@ interface FileRowProps {
 
 const FileRow = memo(function FileRow({
   row,
+  rowNumber,
   phase,
   isSelected,
   onToggle,
   style,
 }: FileRowProps) {
+  const statusBg = phase !== "review" ? (STATUS_ROW_BG[row.status] ?? "") : "";
+
   return (
     <div
-      className={`grid ${GRID_COLS} gap-2 px-4 items-center text-xs border-b border-gray-50 hover:bg-gray-50/50`}
+      className={`grid ${GRID_COLS} gap-2 px-4 items-center text-xs border-b border-gray-50 hover:brightness-95 ${statusBg}`}
       style={style}
     >
-      {/* Col 1: Checkbox / Status icon */}
+      {/* Col 1: Row number */}
+      <span className="text-gray-400 text-center tabular-nums text-[10px]">
+        {rowNumber}
+      </span>
+
+      {/* Col 2: Checkbox / Status icon */}
       <div className="flex items-center justify-center">
         {phase === "review" ? (
           <input
@@ -253,27 +292,27 @@ const FileRow = memo(function FileRow({
         )}
       </div>
 
-      {/* Col 2: Filename */}
+      {/* Col 3: Filename */}
       <span className="text-gray-700 truncate" title={row.filename}>
         {row.filename}
       </span>
 
-      {/* Col 3: Folder */}
+      {/* Col 4: Folder */}
       <span className="text-gray-500 truncate" title={row.folder}>
         {row.folder}
       </span>
 
-      {/* Col 4: Size */}
+      {/* Col 5: Size */}
       <span className="text-gray-500 text-right tabular-nums">
         {formatBytes(row.size)}
       </span>
 
-      {/* Col 5: Status */}
+      {/* Col 6: Status */}
       <div className="flex justify-center">
         <StatusBadge status={row.status} progressPercent={row.progressPercent} phase={phase} />
       </div>
 
-      {/* Col 6: Detail */}
+      {/* Col 7: Detail */}
       <div className="text-gray-400 truncate">
         {phase === "review" && formatDate(row.mtime)}
         {phase === "uploading" && row.status === "in_progress" && (
