@@ -56,6 +56,7 @@ export default function UnifiedFileTable({
 }: UnifiedFileTableProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: files.length,
     getScrollElement: () => scrollContainerRef.current,
