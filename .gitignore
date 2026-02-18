@@ -6,7 +6,7 @@ settings.json
 modaq_upload_cache.db
 
 # Log files
-logs/
+/logs/
 
 # Python
 __pycache__/
