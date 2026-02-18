@@ -1,6 +1,8 @@
 """Delete API routes for local file cleanup after S3 upload."""
 
+import getpass
 import json
+import subprocess
 import threading
 import time
 from collections import deque
@@ -73,6 +75,7 @@ def scan_folder() -> tuple[Response, int]:
         return jsonify({"error": f"Permission denied: {e}"}), 403
 
     total_size = sum(f.file_size for f in job.files)
+    has_permission_issues = any(not f.writable for f in job.files)
 
     return jsonify({
         "success": True,
@@ -81,6 +84,7 @@ def scan_folder() -> tuple[Response, int]:
         "files": [f.to_dict() for f in job.files],
         "total_files": len(job.files),
         "total_size": total_size,
+        "permission_warning": has_permission_issues,
     }), 200
 
 
@@ -229,3 +233,73 @@ def cancel_delete(job_id: str) -> tuple[Response, int]:
         }), 200
 
     return jsonify({"error": "Job not found"}), 404
+
+
+@delete_bp.route("/fix-permissions", methods=["POST"])
+def fix_permissions() -> tuple[Response, int]:
+    """Fix file permissions on an ext4 external drive using sudo chown.
+
+    Runs ``sudo -S chown -R <current_user> <folder_path>`` with the
+    supplied password piped via stdin (never logged or stored).
+
+    Request body:
+        folder_path: Directory whose ownership should be fixed
+        password: The user's sudo password
+
+    Returns:
+        JSON with success status or error details
+    """
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    data = request.get_json()
+    if not data or "folder_path" not in data or "password" not in data:
+        return jsonify({"error": "folder_path and password are required"}), 400
+
+    folder_path = Path(data["folder_path"])
+    password: str = data["password"]
+
+    if not folder_path.exists():
+        return jsonify({"error": f"Folder not found: {folder_path}"}), 404
+
+    if not folder_path.is_dir():
+        return jsonify({"error": f"Path is not a directory: {folder_path}"}), 400
+
+    # Security: only allow paths under /media/ to prevent abuse
+    try:
+        resolved = folder_path.resolve()
+        if not str(resolved).startswith("/media/"):
+            return jsonify(
+                {"error": "Permission fix is only allowed for paths under /media/"}
+            ), 403
+    except (OSError, ValueError):
+        return jsonify({"error": "Invalid path"}), 400
+
+    current_user = getpass.getuser()
+
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["sudo", "-S", "chown", "-R", current_user, str(resolved)],
+            input=f"{password}\n",
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            # Strip sudo password prompt from error output
+            error_lines = [
+                line
+                for line in stderr.splitlines()
+                if not line.startswith("[sudo]") and "password" not in line.lower()
+            ]
+            error_msg = "\n".join(error_lines).strip() or "Permission fix failed"
+            return jsonify({"error": error_msg}), 500
+
+        return jsonify({"success": True}), 200
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Operation timed out"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
