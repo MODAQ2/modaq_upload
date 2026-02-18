@@ -7,7 +7,7 @@
  * only in the terminal event and is stored in uploadStore.completedJob.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiPost } from "../api/client.ts";
 import { useUploadStore } from "../stores/uploadStore.ts";
@@ -27,6 +27,13 @@ interface StatusCounts {
   failed: number;
 }
 
+interface UseUploadJobOptions {
+  /** Called for each file update during analysis/upload. */
+  onFileUpdate?: (file: FileUploadState) => void;
+  /** Called with the full file list on completion. */
+  onCompletion?: (files: FileUploadState[]) => void;
+}
+
 interface UseUploadJobResult {
   startUpload: (
     filePaths: string[],
@@ -40,12 +47,9 @@ interface UseUploadJobResult {
   progressPercent: number;
   eta: number | null;
   isRunning: boolean;
+  isCancelling: boolean;
   uploadedBytesFormatted: string;
   totalBytesFormatted: string;
-  /** Per-file SSE callback ref — wire to FileStore.updateFile. */
-  onFileUpdate: React.MutableRefObject<((file: FileUploadState) => void) | null>;
-  /** Completion callback ref — wire to FileStore.mergeCompletion. */
-  onCompletion: React.MutableRefObject<((files: FileUploadState[]) => void) | null>;
 }
 
 type SSEEvent =
@@ -65,7 +69,7 @@ function isFullJobDict(data: Record<string, unknown>): data is UploadJob & Recor
   return "job_id" in data && "total_bytes" in data && !("type" in data);
 }
 
-export function useUploadJob(): UseUploadJobResult {
+export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobResult {
   const [jobId, setJobId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [filesProcessed, setFilesProcessed] = useState(0);
@@ -80,12 +84,18 @@ export function useUploadJob(): UseUploadJobResult {
   const [eta, setEta] = useState<number | null>(null);
   const [uploadedBytesFormatted, setUploadedBytesFormatted] = useState("");
   const [totalBytesFormatted, setTotalBytesFormatted] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const { setUploadJobId, setCompletedJob } = useUploadStore();
 
-  // Callback refs for per-file updates — wired by UploadPage to FileStore
-  const onFileUpdateRef = useRef<((file: FileUploadState) => void) | null>(null);
-  const onCompletionRef = useRef<((files: FileUploadState[]) => void) | null>(null);
+  // Callback refs — kept in sync with latest options via effect
+  const onFileUpdateRef = useRef(options.onFileUpdate);
+  const onCompletionRef = useRef(options.onCompletion);
+
+  useEffect(() => {
+    onFileUpdateRef.current = options.onFileUpdate;
+    onCompletionRef.current = options.onCompletion;
+  });
 
   /** Handle each SSE event. */
   const handleMessage = useCallback(
@@ -172,6 +182,7 @@ export function useUploadJob(): UseUploadJobResult {
           p.status === "cancelled"
         ) {
           setIsRunning(false);
+          setIsCancelling(false);
           setJobId(null);
         }
         return;
@@ -196,6 +207,7 @@ export function useUploadJob(): UseUploadJobResult {
         // Notify unified table with all completion data
         onCompletionRef.current?.(job.files);
         setIsRunning(false);
+        setIsCancelling(false);
         setJobId(null);
         return;
       }
@@ -215,6 +227,7 @@ export function useUploadJob(): UseUploadJobResult {
       // Stream closed — if we're still "running" the server ended it.
       if (isRunning) {
         setIsRunning(false);
+        setIsCancelling(false);
         setJobId(null);
       }
     },
@@ -232,6 +245,7 @@ export function useUploadJob(): UseUploadJobResult {
       setEta(null);
       setUploadedBytesFormatted("");
       setTotalBytesFormatted("");
+      setIsCancelling(false);
       setIsRunning(true);
 
       try {
@@ -253,18 +267,19 @@ export function useUploadJob(): UseUploadJobResult {
     [setUploadJobId],
   );
 
-  /** Cancel the current upload job. */
+  /** Cancel the current upload job. SSE terminal event handles cleanup. */
   const cancelUpload = useCallback(async () => {
     const currentJobId = useUploadStore.getState().uploadJobId;
-    if (currentJobId) {
-      try {
-        await apiPost(`/api/upload/cancel/${currentJobId}`);
-      } catch {
-        // Ignore
-      }
+    if (!currentJobId) return;
+    setIsCancelling(true);
+    try {
+      await apiPost(`/api/upload/cancel/${currentJobId}`);
+    } catch {
+      // If the cancel request itself fails, force-close
+      setIsRunning(false);
+      setJobId(null);
+      setIsCancelling(false);
     }
-    setIsRunning(false);
-    setJobId(null);
   }, []);
 
   return {
@@ -277,9 +292,8 @@ export function useUploadJob(): UseUploadJobResult {
     progressPercent,
     eta,
     isRunning,
+    isCancelling,
     uploadedBytesFormatted,
     totalBytesFormatted,
-    onFileUpdate: onFileUpdateRef,
-    onCompletion: onCompletionRef,
   };
 }
