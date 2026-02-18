@@ -31,6 +31,7 @@ import {
   Cloud,
   Circle,
   Lock,
+  Power,
   type LucideProps,
 } from "lucide-react";
 
@@ -62,6 +63,7 @@ export const MinusIcon = Minus;
 export const CloudIcon = Cloud;
 export const CircleIcon = Circle;
 export const LockIcon = Lock;
+export const PowerIcon = Power;
 
 // Export type for icon props
 export type { LucideProps as IconProps };

@@ -1,5 +1,9 @@
 """Settings API routes for modaq_upload"""
 
+import os
+import signal
+import threading
+
 from flask import Blueprint, Response, jsonify, request
 
 from app.config import get_package_version, get_settings, get_updater
@@ -245,6 +249,30 @@ def invalidate_cache() -> tuple[Response, int]:
             "message": f"Invalidated {deleted} cache entries for bucket '{settings.s3_bucket}'",
         }
     ), 200
+
+
+@settings_bp.route("/shutdown", methods=["POST"])
+def shutdown_server() -> tuple[Response, int]:
+    """Gracefully shut down the application server.
+
+    Sends SIGINT to the current process after a brief delay so the
+    HTTP response can be returned to the client first.
+
+    Returns:
+        JSON response confirming shutdown was initiated
+    """
+    log = get_log_service()
+    log.info("app", "shutdown_requested", "Graceful shutdown requested via settings UI")
+
+    def _shutdown() -> None:
+        os.kill(os.getpid(), signal.SIGINT)
+
+    # Delay slightly so the response reaches the client
+    timer = threading.Timer(0.5, _shutdown)
+    timer.daemon = True
+    timer.start()
+
+    return jsonify({"success": True, "message": "Server is shutting down..."}), 200
 
 
 @settings_bp.route("/cache/sync", methods=["POST"])

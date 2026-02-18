@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { apiPost } from "../../api/client.ts";
 import { useAppStore } from "../../stores/appStore.ts";
+import { PowerIcon } from "../../utils/icons.tsx";
 
 const DEFAULT_SETTINGS = {
   aws_profile: "default",
@@ -16,6 +17,7 @@ export default function DangerZone() {
 
   const [clearing, setClearing] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [shuttingDown, setShuttingDown] = useState(false);
 
   async function handleClearCache() {
     if (!window.confirm("Are you sure you want to clear the upload cache? This cannot be undone.")) {
@@ -59,6 +61,25 @@ export default function DangerZone() {
     }
   }
 
+  async function handleShutdown() {
+    if (
+      !window.confirm(
+        "Are you sure you want to shut down the server? You will need to restart it manually.",
+      )
+    ) {
+      return;
+    }
+
+    setShuttingDown(true);
+    try {
+      await apiPost<{ success: boolean; message: string }>("/api/settings/shutdown");
+      addNotification("info", "Server is shutting down...");
+    } catch {
+      addNotification("error", "Failed to shut down server");
+      setShuttingDown(false);
+    }
+  }
+
   return (
     <div className="bg-white rounded-lg shadow p-6 border-2 border-red-300">
       <h3 className="text-lg font-semibold text-red-600 mb-2">Danger Zone</h3>
@@ -98,6 +119,24 @@ export default function DangerZone() {
             className="ml-4 px-4 py-2 text-sm font-medium text-red-600 border border-red-300 rounded-md hover:bg-red-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
           >
             {resetting ? "Resetting..." : "Reset Settings"}
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between p-3 rounded-md border border-red-200 bg-red-50/50">
+          <div>
+            <div className="text-sm font-medium text-nlr-text">Shutdown Server</div>
+            <div className="text-xs text-gray-500">
+              Gracefully shuts down the application. You will need to restart it manually.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleShutdown}
+            disabled={shuttingDown}
+            className="ml-4 px-4 py-2 text-sm font-medium text-red-600 border border-red-300 rounded-md hover:bg-red-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap inline-flex items-center gap-1.5"
+          >
+            <PowerIcon className="h-4 w-4" />
+            {shuttingDown ? "Shutting down..." : "Shutdown"}
           </button>
         </div>
       </div>
