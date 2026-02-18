@@ -21,8 +21,11 @@ export function useSSE({ url, onMessage, onError }: UseSSEOptions): void {
   // because the caller created a new closure.
   const onMessageRef = useRef(onMessage);
   const onErrorRef = useRef(onError);
-  onMessageRef.current = onMessage;
-  onErrorRef.current = onError;
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+    onErrorRef.current = onError;
+  });
 
   useEffect(() => {
     if (!url) return;
