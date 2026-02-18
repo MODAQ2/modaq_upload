@@ -1,5 +1,6 @@
 """File browsing API routes for modaq_upload"""
 
+import os
 from pathlib import Path
 
 from flask import Blueprint, Response, g, jsonify, request
@@ -142,7 +143,9 @@ def browse_local() -> tuple[Response, int]:
     if not path.is_dir():
         return jsonify({"error": f"Not a directory: {path}"}), 400
 
-    # Build response — single-pass rglob for recursive MCAP counts + cache checks
+    # Build response — single-pass walk for recursive MCAP counts + cache checks.
+    # os.walk with onerror skips unreadable subdirectories instead of aborting,
+    # which is important on Linux where permission errors are common.
     cache = get_cache_service()
     bucket = g.settings.s3_bucket
 
@@ -152,23 +155,30 @@ def browse_local() -> tuple[Response, int]:
     mcap_count = 0
     direct_uploaded = 0
 
-    try:
-        for mcap_path in path.rglob("*.mcap"):
-            # Skip hidden paths (any component starting with .)
-            if any(part.startswith(".") for part in mcap_path.relative_to(path).parts):
+    def _walk_error(err: OSError) -> None:
+        pass  # Skip unreadable directories silently
+
+    for dirpath, dirnames, filenames in os.walk(str(path), onerror=_walk_error):
+        # Skip hidden directories in-place so os.walk won't descend into them
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+
+        for fname in filenames:
+            if not fname.endswith(".mcap") or fname.startswith("."):
                 continue
 
-            # Check cache for already-uploaded status
-            try:
-                file_stat = mcap_path.stat()
-                uploaded = cache.check_exists_by_filename(
-                    bucket, mcap_path.name, file_stat.st_size
-                ) is True
-            except PermissionError:
-                continue
-
+            mcap_path = Path(dirpath) / fname
             rel = mcap_path.relative_to(path)
             parts = rel.parts
+
+            try:
+                file_stat = mcap_path.stat()
+            except OSError:
+                continue
+
+            uploaded = cache.check_exists_by_filename(
+                bucket, mcap_path.name, file_stat.st_size
+            ) is True
+
             if len(parts) == 1:
                 # Direct child MCAP file
                 mcap_count += 1
@@ -191,8 +201,6 @@ def browse_local() -> tuple[Response, int]:
                     folder_uploaded_counts[folder_name] = (
                         folder_uploaded_counts.get(folder_name, 0) + 1
                     )
-    except PermissionError:
-        return jsonify({"error": f"Permission denied: {path}"}), 403
 
     # Build folder list from direct children (non-hidden directories)
     folders: list[dict[str, str | int]] = []
@@ -237,7 +245,7 @@ def browse_local() -> tuple[Response, int]:
     volumes_path = Path("/Volumes")
     if volumes_path.exists():
         try:
-            for vol in volumes_path.iterdir():
+            for vol in sorted(volumes_path.iterdir(), key=lambda x: x.name.lower()):
                 if vol.is_dir() and not vol.name.startswith("."):
                     quick_links.append({"name": vol.name, "path": str(vol)})
         except PermissionError:
