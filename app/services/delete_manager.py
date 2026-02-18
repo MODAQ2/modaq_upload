@@ -168,12 +168,20 @@ class DeleteManager:
     def __init__(self) -> None:
         self.jobs: dict[str, DeleteJob] = {}
 
-    def scan_folder(self, folder_path: str, bucket: str) -> DeleteJob:
+    def scan_folder(
+        self,
+        folder_path: str,
+        bucket: str,
+        excluded_subfolders: list[str] | None = None,
+        excluded_files: list[str] | None = None,
+    ) -> DeleteJob:
         """Scan a folder for .mcap files and cross-reference with upload cache.
 
         Args:
             folder_path: Local directory to scan
             bucket: S3 bucket to check against
+            excluded_subfolders: Subfolder names to skip
+            excluded_files: Root-level filenames to skip
 
         Returns:
             A new DeleteJob with files matched against the cache
@@ -182,9 +190,22 @@ class DeleteManager:
         job = DeleteJob(job_id=job_id)
         cache = get_cache_service()
         folder = Path(folder_path)
+        excluded_subs_set = set(excluded_subfolders or [])
+        excluded_files_set = set(excluded_files or [])
 
         for mcap_path in sorted(folder.rglob("*.mcap")):
             if not mcap_path.is_file():
+                continue
+
+            rel = mcap_path.relative_to(folder)
+            parts = rel.parts
+
+            # Skip root-level files that are excluded
+            if len(parts) == 1 and parts[0] in excluded_files_set:
+                continue
+
+            # Skip files under excluded subfolders
+            if len(parts) > 1 and parts[0] in excluded_subs_set:
                 continue
 
             stat = mcap_path.stat()

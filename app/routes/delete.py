@@ -56,11 +56,19 @@ def scan_folder() -> tuple[Response, int]:
     if not folder_path.is_dir():
         return jsonify({"error": f"Path is not a directory: {folder_path}"}), 400
 
+    excluded_subfolders: list[str] = data.get("excluded_subfolders", [])
+    excluded_files: list[str] = data.get("excluded_files", [])
+
     settings = get_settings()
     manager = get_delete_manager()
 
     try:
-        job = manager.scan_folder(str(folder_path.absolute()), settings.s3_bucket)
+        job = manager.scan_folder(
+            str(folder_path.absolute()),
+            settings.s3_bucket,
+            excluded_subfolders=excluded_subfolders,
+            excluded_files=excluded_files,
+        )
     except PermissionError as e:
         return jsonify({"error": f"Permission denied: {e}"}), 403
 
