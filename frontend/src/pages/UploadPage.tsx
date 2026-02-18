@@ -6,8 +6,10 @@
  *   with phase-aware header, toolbar, and footer.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import Spinner from "../components/common/Spinner.tsx";
+import CancelConfirmModal from "../components/upload/CancelConfirmModal.tsx";
 import ConfirmModal from "../components/upload/ConfirmModal.tsx";
 import FolderBrowser from "../components/upload/FolderBrowser.tsx";
 import type { FolderExclusions } from "../components/upload/FolderBrowser.tsx";
@@ -48,48 +50,53 @@ export default function UploadPage() {
     totals,
   } = useFolderScan();
 
-  const uploadJob = useUploadJob();
-
   // Unified file store
   const { files, store } = useFileStore();
 
+  // SSE callback: map each file event to the FileStore
+  const handleFileUpdate = useCallback((file: FileUploadState) => {
+    const statusMap: Record<string, "in_progress" | "completed" | "skipped" | "failed" | "queued"> = {
+      analyzing: "in_progress",
+      uploading: "in_progress",
+      completed: "completed",
+      skipped: "skipped",
+      failed: "failed",
+      cancelled: "failed",
+    };
+    store.updateFile(file.local_path, {
+      status: statusMap[file.status] ?? "queued",
+      progressPercent: file.progress_percent,
+      s3Path: file.s3_path || undefined,
+      error: file.error_message || undefined,
+      duration: file.upload_duration_seconds,
+      speed: file.upload_speed_mbps,
+    });
+  }, [store]);
+
+  // SSE callback: merge full completion data into the FileStore
+  const handleCompletion = useCallback((completionFiles: FileUploadState[]) => {
+    store.mergeCompletion(completionFiles);
+  }, [store]);
+
+  const uploadJob = useUploadJob({
+    onFileUpdate: handleFileUpdate,
+    onCompletion: handleCompletion,
+  });
+
   // Local state
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
   const [pendingSelectedPaths, setPendingSelectedPaths] = useState<string[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
 
   // Derive phase from step
   const phase: UploadPhase = step <= 2 ? "review" : step === 3 ? "uploading" : "summary";
 
-  // ── Wire SSE callbacks to FileStore (useLayoutEffect to avoid race) ──
-
-  useLayoutEffect(() => {
-    uploadJob.onFileUpdate.current = (file: FileUploadState) => {
-      const statusMap: Record<string, "in_progress" | "completed" | "skipped" | "failed" | "queued"> = {
-        analyzing: "in_progress",
-        uploading: "in_progress",
-        completed: "completed",
-        skipped: "skipped",
-        failed: "failed",
-        cancelled: "failed",
-      };
-      store.updateFile(file.local_path, {
-        status: statusMap[file.status] ?? "queued",
-        progressPercent: file.progress_percent,
-        s3Path: file.s3_path || undefined,
-        error: file.error_message || undefined,
-        duration: file.upload_duration_seconds,
-        speed: file.upload_speed_mbps,
-      });
-    };
-    uploadJob.onCompletion.current = (completionFiles: FileUploadState[]) => {
-      store.mergeCompletion(completionFiles);
-    };
-  });
-
   // ── Sync FileStore from scan data as folders arrive ──
 
-  useEffect(() => {
+  const prevFoldersRef = useRef(folders);
+  if (folders !== prevFoldersRef.current) {
+    prevFoldersRef.current = folders;
     if (folders.length > 0 && step >= 2) {
       store.buildFromScan(folders);
       // Auto-select new files
@@ -103,7 +110,7 @@ export default function UploadPage() {
       }
       setSelectedPaths(newSelected);
     }
-  }, [folders, step, store]);
+  }
 
   // ── Freeze/unfreeze sort on phase transitions ──
 
@@ -149,7 +156,18 @@ export default function UploadPage() {
     [pendingSelectedPaths, setStep, uploadJob, store],
   );
 
-  /** Step 3 -> 4: Upload finished, advance to completion. */
+  /** Cancel button → show confirmation modal. */
+  const handleCancelClick = useCallback(() => {
+    setShowCancelModal(true);
+  }, []);
+
+  /** Cancel confirmed → send cancel to backend, overlay locks the screen. */
+  const handleConfirmCancel = useCallback(async () => {
+    setShowCancelModal(false);
+    await uploadJob.cancelUpload();
+  }, [uploadJob]);
+
+  /** Step 3 -> 4: Upload finished (or cancelled), advance to completion. */
   useEffect(() => {
     if (step === 3 && !uploadJob.isRunning && completedJob) {
       setStep(4);
@@ -194,7 +212,10 @@ export default function UploadPage() {
     });
   }, []);
 
-  const allFiles = useMemo(() => Array.from(store.getAllRows().values()), [files]);
+  // `files` is listed as a dep to re-derive when the store snapshot changes
+  // (store itself is a stable singleton).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const allFiles = useMemo(() => Array.from(store.getAllRows().values()), [store, files]);
 
   const toggleAllFiltered = useCallback(() => {
     const filteredPaths = files.map((f) => f.path);
@@ -371,8 +392,8 @@ export default function UploadPage() {
             onBack={handleBack}
             onStartUpload={handleStartUploadClick}
             selectedNewCount={selectedNewCount}
-            onCancel={uploadJob.cancelUpload}
-            isRunning={uploadJob.isRunning}
+            onCancel={handleCancelClick}
+            isRunning={uploadJob.isRunning && !uploadJob.isCancelling}
             onDownloadCsv={handleDownloadCsv}
             onUploadMore={handleUploadMore}
             failedCount={uploadJob.statusCounts.failed}
@@ -388,6 +409,26 @@ export default function UploadPage() {
               alreadyUploaded={selectedTotals.alreadyUploaded}
               totalSize={selectedTotals.totalSize}
             />
+          )}
+
+          {/* Cancel confirmation modal */}
+          <CancelConfirmModal
+            isOpen={showCancelModal}
+            onClose={() => setShowCancelModal(false)}
+            onConfirm={handleConfirmCancel}
+            filesProcessed={uploadJob.filesProcessed}
+            totalFiles={uploadJob.totalFiles}
+          />
+
+          {/* Cancelling overlay — locks the screen while backend winds down */}
+          {uploadJob.isCancelling && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm">
+              <div className="bg-white rounded-lg shadow-xl px-8 py-6 flex flex-col items-center gap-3">
+                <Spinner />
+                <p className="text-sm font-medium text-gray-700">Cancelling upload...</p>
+                <p className="text-xs text-gray-500">Waiting for in-progress files to finish.</p>
+              </div>
+            </div>
           )}
         </div>
       )}
