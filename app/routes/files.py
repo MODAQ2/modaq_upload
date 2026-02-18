@@ -241,6 +241,11 @@ def browse_local() -> tuple[Response, int]:
         {"name": "Home", "path": str(Path.home())},
     ]
 
+    # Add SURFWEC SSD as the top priority quick link
+    surfwec_ssd = Path("/media/m2/SURFWEC_SSD")
+    if surfwec_ssd.exists() and surfwec_ssd.is_dir():
+        quick_links.append({"name": "SURFWEC_SSD", "path": str(surfwec_ssd)})
+
     # Add Volumes on macOS
     volumes_path = Path("/Volumes")
     if volumes_path.exists():
@@ -279,6 +284,9 @@ def browse_local() -> tuple[Response, int]:
                     children = []
                 if children:
                     for child in sorted(children, key=lambda x: x.name.lower()):
+                        # Already added SURFWEC_SSD above
+                        if child == surfwec_ssd:
+                            continue
                         quick_links.append({"name": child.name, "path": str(child)})
                 else:
                     quick_links.append({"name": entry.name, "path": entry_str})

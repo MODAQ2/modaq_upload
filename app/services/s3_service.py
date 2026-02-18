@@ -10,6 +10,10 @@ from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import ClientError, NoCredentialsError
 from mypy_boto3_s3 import S3Client
 
+
+class UploadCancelledError(Exception):
+    """Raised when an upload is cancelled mid-transfer."""
+
 # Multipart threshold: files below this size are uploaded as a single PUT request,
 # which produces a simple MD5 ETag. Files above use multipart upload, which produces
 # a composite ETag (md5_of_part_md5s-part_count) that can't be compared to a local MD5.
@@ -101,6 +105,7 @@ def upload_file_with_progress(
     bucket: str,
     key: str,
     callback: Callable[[int, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Upload a file to S3 with progress tracking.
 
@@ -110,9 +115,15 @@ def upload_file_with_progress(
         bucket: S3 bucket name
         key: S3 object key
         callback: Progress callback function (bytes_uploaded, total_bytes)
+        cancel_check: Callable that returns True if the upload should be cancelled.
+            Checked on every progress callback (each chunk). When True, raises
+            UploadCancelledError to abort the boto3 transfer immediately.
 
     Returns:
         Dictionary with upload result information
+
+    Raises:
+        UploadCancelledError: If cancel_check returns True during upload
     """
     file_path = Path(path)
     file_size = file_path.stat().st_size
@@ -121,18 +132,24 @@ def upload_file_with_progress(
         """Callback class for tracking upload progress."""
 
         def __init__(
-            self, total_size: int, user_callback: Callable[[int, int], None] | None
+            self,
+            total_size: int,
+            user_callback: Callable[[int, int], None] | None,
+            should_cancel: Callable[[], bool] | None,
         ) -> None:
             self.total_size = total_size
             self.uploaded = 0
             self.user_callback = user_callback
+            self.should_cancel = should_cancel
 
         def __call__(self, bytes_amount: int) -> None:
+            if self.should_cancel and self.should_cancel():
+                raise UploadCancelledError(f"Upload cancelled for {key}")
             self.uploaded += bytes_amount
             if self.user_callback:
                 self.user_callback(self.uploaded, self.total_size)
 
-    progress = ProgressCallback(file_size, callback)
+    progress = ProgressCallback(file_size, callback, cancel_check)
 
     try:
         client.upload_file(
@@ -150,6 +167,8 @@ def upload_file_with_progress(
             "size": file_size,
             "error": None,
         }
+    except UploadCancelledError:
+        raise
     except ClientError as e:
         return {
             "success": False,

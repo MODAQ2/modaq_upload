@@ -16,6 +16,7 @@ from typing import Any
 from app.services import mcap_service, s3_service
 from app.services.cache_service import get_cache_service
 from app.services.log_service import get_log_service
+from app.services.s3_service import UploadCancelledError
 from app.services.utils import format_file_size
 
 logger = logging.getLogger(__name__)
@@ -608,6 +609,11 @@ class UploadManager:
                 for file_state in job.files
             }
             for future in as_completed(parse_futures):
+                if job.cancelled:
+                    for pending_future in parse_futures:
+                        pending_future.cancel()
+                    break
+
                 file_state = parse_futures[future]
                 result = future.result()
                 if isinstance(result, str):
@@ -776,6 +782,11 @@ class UploadManager:
                     fs: FileUploadState,
                 ) -> Callable[[], Any]:
                     def upload_task() -> Any:
+                        if job.cancelled:
+                            with job.lock:
+                                fs.status = UploadStatus.CANCELLED
+                            return None
+
                         # Mark UPLOADING inside the worker so files stay READY until picked up
                         with job.lock:
                             fs.status = UploadStatus.UPLOADING
@@ -806,6 +817,7 @@ class UploadManager:
                             s3_bucket,
                             fs.s3_path,
                             byte_callback,
+                            cancel_check=lambda: job.cancelled,
                         )
 
                     return upload_task
@@ -815,12 +827,12 @@ class UploadManager:
 
             # Process results as they complete
             for future in as_completed(futures):
-                if job.cancelled:
-                    break
-
                 file_state = futures[future]
                 try:
                     result = future.result()
+                    if result is None:
+                        # Task was cancelled before starting
+                        continue
                     file_state.upload_completed_at = datetime.now(UTC)
                     if result["success"]:
                         file_state.status = UploadStatus.COMPLETED
@@ -862,6 +874,10 @@ class UploadManager:
                                 "error": file_state.error_message,
                             },
                         )
+                except UploadCancelledError:
+                    with job.lock:
+                        file_state.status = UploadStatus.CANCELLED
+                        file_state.upload_completed_at = datetime.now(UTC)
                 except Exception as e:
                     file_state.upload_completed_at = datetime.now(UTC)
                     file_state.status = UploadStatus.FAILED
@@ -1038,6 +1054,9 @@ class UploadManager:
 
                 for future in as_completed(parse_futures):
                     if job.cancelled:
+                        # Cancel remaining parse futures that haven't started yet
+                        for pending_future in parse_futures:
+                            pending_future.cancel()
                         break
 
                     fs = parse_futures[future]
@@ -1128,6 +1147,10 @@ class UploadManager:
                             if job.cancelled:
                                 with job.lock:
                                     file_state.status = UploadStatus.CANCELLED
+                                if analysis_callback:
+                                    analysis_callback(job, file_state)
+                                if upload_callback:
+                                    upload_callback(job)
                                 return None
 
                             try:
@@ -1160,6 +1183,7 @@ class UploadManager:
                                     s3_bucket,
                                     file_state.s3_path,
                                     byte_callback,
+                                    cancel_check=lambda: job.cancelled,
                                 )
 
                                 # Handle completion inline
@@ -1211,6 +1235,10 @@ class UploadManager:
                                             "error": file_state.error_message,
                                         },
                                     )
+                            except UploadCancelledError:
+                                with job.lock:
+                                    file_state.status = UploadStatus.CANCELLED
+                                    file_state.upload_completed_at = datetime.now(UTC)
                             except Exception as e:
                                 file_state.upload_completed_at = datetime.now(UTC)
                                 file_state.status = UploadStatus.FAILED
@@ -1248,8 +1276,20 @@ class UploadManager:
                 {"job_id": job_id, "error": str(e)},
             )
         finally:
-            # Wait for all in-flight uploads to complete
-            upload_executor.shutdown(wait=True)
+            # Wait for in-flight uploads; cancel_work_items prevents queued tasks from starting
+            upload_executor.shutdown(wait=True, cancel_futures=True)
+
+            # Mark any files still in non-terminal states as cancelled
+            if job.cancelled:
+                with job.lock:
+                    for fs in job.files:
+                        if fs.status in (
+                            UploadStatus.PENDING,
+                            UploadStatus.READY,
+                            UploadStatus.ANALYZING,
+                            UploadStatus.UPLOADING,
+                        ):
+                            fs.status = UploadStatus.CANCELLED
 
         # Final job status
         job.completed_at = datetime.now(UTC)
@@ -1352,9 +1392,14 @@ class UploadManager:
             return False
 
         job.cancelled = True
-        for file_state in job.files:
-            if file_state.status in (UploadStatus.PENDING, UploadStatus.READY):
-                file_state.status = UploadStatus.CANCELLED
+        with job.lock:
+            for file_state in job.files:
+                if file_state.status in (
+                    UploadStatus.PENDING,
+                    UploadStatus.READY,
+                    UploadStatus.ANALYZING,
+                ):
+                    file_state.status = UploadStatus.CANCELLED
 
         # Clean up temp directory when job is cancelled
         self.cleanup_temp_dir(job_id)
