@@ -11,8 +11,13 @@ import { apiPost } from "../api/client.ts";
 import { useDeleteStore } from "../stores/deleteStore.ts";
 import type { DeleteScanResponse } from "../types/delete.ts";
 
+interface ScanExclusions {
+  subfolders: string[];
+  files: string[];
+}
+
 interface UseDeleteScanResult {
-  scan: (folderPath: string) => Promise<void>;
+  scan: (folderPath: string, exclusions?: ScanExclusions) => Promise<void>;
   isScanning: boolean;
 }
 
@@ -21,12 +26,15 @@ export function useDeleteScan(): UseDeleteScanResult {
     useDeleteStore();
 
   const scan = useCallback(
-    async (folderPath: string) => {
+    async (folderPath: string, exclusions?: ScanExclusions) => {
       setIsScanning(true);
       try {
-        const res = await apiPost<DeleteScanResponse>("/api/delete/scan", {
-          folder_path: folderPath,
-        });
+        const body: Record<string, unknown> = { folder_path: folderPath };
+        if (exclusions) {
+          body.excluded_subfolders = exclusions.subfolders;
+          body.excluded_files = exclusions.files;
+        }
+        const res = await apiPost<DeleteScanResponse>("/api/delete/scan", body);
         setDeleteJobId(res.job_id);
         setScanResults(res.files, res.total_size);
       } finally {
