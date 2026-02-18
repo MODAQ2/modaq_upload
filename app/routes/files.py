@@ -251,6 +251,40 @@ def browse_local() -> tuple[Response, int]:
         except PermissionError:
             pass
 
+    # Add /media/m2 as a priority quick link on Linux if it exists
+    media_m2 = Path("/media/m2")
+    if media_m2.exists() and media_m2.is_dir():
+        quick_links.append({"name": "m2", "path": str(media_m2)})
+
+    # Add /media itself and its subdirectories on Linux (removable drives, USB, etc.)
+    media_path = Path("/media")
+    if media_path.exists() and not volumes_path.exists():
+        quick_links.append({"name": "media", "path": str(media_path)})
+        try:
+            for entry in sorted(media_path.iterdir(), key=lambda x: x.name.lower()):
+                if not entry.is_dir() or entry.name.startswith("."):
+                    continue
+                entry_str = str(entry)
+                # Already added /media/m2 above
+                if entry_str == str(media_m2):
+                    continue
+                # If it's a user directory (e.g. /media/username), list its children
+                try:
+                    children = [
+                        c
+                        for c in entry.iterdir()
+                        if c.is_dir() and not c.name.startswith(".")
+                    ]
+                except PermissionError:
+                    children = []
+                if children:
+                    for child in sorted(children, key=lambda x: x.name.lower()):
+                        quick_links.append({"name": child.name, "path": str(child)})
+                else:
+                    quick_links.append({"name": entry.name, "path": entry_str})
+        except PermissionError:
+            pass
+
     return jsonify(
         {
             "success": True,
