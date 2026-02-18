@@ -40,6 +40,7 @@ class FileDeleteState:
     file_size: int
     s3_path: str
     s3_bucket: str
+    writable: bool = True
     status: DeleteStatus = DeleteStatus.PENDING
     local_md5: str = ""
     s3_etag: str = ""
@@ -55,6 +56,7 @@ class FileDeleteState:
             "file_size": self.file_size,
             "s3_path": self.s3_path,
             "s3_bucket": self.s3_bucket,
+            "writable": self.writable,
             "status": self.status.value,
             "local_md5": self.local_md5,
             "s3_etag": self.s3_etag,
@@ -222,6 +224,7 @@ class DeleteManager:
                     file_size=file_size,
                     s3_path=str(cache_info["s3_path"]),
                     s3_bucket=bucket,
+                    writable=os.access(str(mcap_path), os.W_OK),
                 )
                 job.files.append(file_state)
 
