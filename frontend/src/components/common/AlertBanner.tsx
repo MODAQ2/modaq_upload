@@ -51,8 +51,8 @@ const iconColorStyles: Record<AlertType, string> = {
   info: "text-blue-500",
   warning: "text-yellow-500",
   error: "text-red-500",
-  success: "text-green-500",
-  shield: "text-green-500",
+  success: "text-green-700",
+  shield: "text-green-700",
 };
 
 export default function AlertBanner({

@@ -294,7 +294,7 @@ function StatusIcon({ status }: { status: UnifiedStatus }) {
     case "in_progress":
       return <SpinnerIcon className="w-4 h-4 text-nlr-blue animate-spin" />;
     case "completed":
-      return <CheckIcon className="w-4 h-4 text-green-500" strokeWidth={2.5} />;
+      return <CheckIcon className="w-4 h-4 text-green-700" strokeWidth={2.5} />;
     case "failed":
       return <XIcon className="w-4 h-4 text-red-500" strokeWidth={2.5} />;
     case "skipped":

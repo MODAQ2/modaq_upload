@@ -56,8 +56,8 @@ export default function Stepper({
         let circleClass =
           "w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold transition-colors";
         if (isDone) {
-          circleClass += " bg-green-500 text-white";
-          if (canClick) circleClass += " cursor-pointer hover:bg-green-600";
+          circleClass += " bg-green-700 text-white";
+          if (canClick) circleClass += " cursor-pointer hover:bg-green-800";
         } else if (isActive) {
           circleClass += " bg-nlr-blue text-white";
         } else {
@@ -79,12 +79,12 @@ export default function Stepper({
                 aria-label={`Step ${step.number}: ${step.label}${isDone ? " (completed)" : ""}${isActive ? " (current)" : ""}`}
                 data-testid={`${testIdPrefix}-${step.number}`}
               >
-                {isDone ? <CheckIcon className="w-5 h-5" /> : step.number}
+                {isDone ? <CheckIcon className="w-5 h-5" data-testid="checkmark-icon" /> : step.number}
               </button>
               <span
                 className={`mt-1.5 text-xs font-medium ${
                   isDone
-                    ? "text-green-600"
+                    ? "text-green-800"
                     : isActive
                       ? "text-nlr-blue"
                       : "text-gray-400"
@@ -96,7 +96,7 @@ export default function Stepper({
             {showConnector && (
               <div
                 className={`w-16 sm:w-24 h-0.5 mx-2 mb-5 ${
-                  step.number < currentStep ? "bg-green-500" : "bg-gray-300"
+                  step.number < currentStep ? "bg-green-700" : "bg-gray-300"
                 }`}
               />
             )}
