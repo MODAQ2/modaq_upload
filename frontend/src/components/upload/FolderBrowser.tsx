@@ -23,6 +23,7 @@ import {
   ChevronRightIcon,
   CheckIcon,
   PlusIcon,
+  RefreshIcon,
   UploadIcon,
 } from "../../utils/icons.tsx";
 
@@ -124,6 +125,15 @@ export default function FolderBrowser({
     navigate(initialPath);
   }, [navigate, initialPath]);
 
+  /** Re-fetch the current directory without resetting to initialPath. */
+  const refresh = useCallback(() => {
+    if (data) {
+      navigate(data.current_path);
+    } else {
+      navigate(initialPath);
+    }
+  }, [data, navigate, initialPath]);
+
   // Reset checked state and search when data changes (new directory loaded)
   useEffect(() => {
     if (!data) return;
@@ -150,6 +160,30 @@ export default function FolderBrowser({
   const totalItems = (data?.folders.length ?? 0) + (data?.files.length ?? 0);
   const checkedCount = checkedFolders.size + checkedFiles.size;
   const allChecked = totalItems > 0 && checkedCount === totalItems;
+
+  // Count actionable files among the user's current selection
+  const selectedActionableCount = useMemo(() => {
+    if (!data) return 0;
+    let count = 0;
+    // Checked folders: sum their actionable file counts
+    for (const folder of data.folders) {
+      if (checkedFolders.has(folder.name)) {
+        count += mode === "upload"
+          ? folder.mcap_count - folder.already_uploaded
+          : folder.already_uploaded;
+      }
+    }
+    // Checked loose files: count actionable ones
+    for (const file of data.files) {
+      if (checkedFiles.has(file.name)) {
+        const isUploaded = file.already_uploaded ?? false;
+        if (mode === "upload" ? !isUploaded : isUploaded) {
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }, [data, checkedFolders, checkedFiles, mode]);
 
   const selectAll = useCallback(() => {
     if (!data) return;
@@ -306,9 +340,18 @@ export default function FolderBrowser({
 
         {/* Main content area */}
         <div className="flex-1 flex flex-col min-w-0">
-          {/* Breadcrumbs */}
-          <div className="px-4 py-2 border-b border-gray-100 bg-gray-50/50">
+          {/* Breadcrumbs + refresh */}
+          <div className="px-4 py-2 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
             <Breadcrumb items={breadcrumbItems} />
+            <button
+              type="button"
+              onClick={refresh}
+              disabled={loading}
+              title="Refresh folder"
+              className="p-1 text-gray-400 hover:text-gray-600 rounded hover:bg-gray-200 transition-colors disabled:opacity-50"
+            >
+              <RefreshIcon className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            </button>
           </div>
 
           {/* Summary bar — always visible when we have data and MCAP files exist */}
@@ -359,7 +402,7 @@ export default function FolderBrowser({
                     ${cfg.buttonColor}
                     disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed`}
                 >
-                  {cfg.buttonLabel(actionableCount)}
+                  {cfg.buttonLabel(selectedActionableCount)}
                   <ChevronRightIcon className="w-4 h-4 ml-1 inline-block" />
                 </button>
               </div>
@@ -581,7 +624,7 @@ function FolderList({
                 {/* Upload status indicator */}
                 {allUploaded && (
                   <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-                    <CheckIcon className="w-3.5 h-3.5 text-green-500" />
+                    <CheckIcon className="w-3.5 h-3.5 text-green-700" />
                     {folder.mcap_count}/{folder.mcap_count} uploaded
                   </span>
                 )}
