@@ -21,6 +21,7 @@ export interface DeleteScanFile {
   file_size: number;
   s3_path: string;
   s3_bucket: string;
+  writable: boolean;
   status: DeleteFileStatus;
   local_md5: string;
   s3_etag: string;
@@ -36,6 +37,7 @@ export interface DeleteScanResponse {
   files: DeleteScanFile[];
   total_files: number;
   total_size: number;
+  permission_warning: boolean;
 }
 
 // ── SSE event types ──

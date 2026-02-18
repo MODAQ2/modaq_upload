@@ -36,7 +36,7 @@ export function useDeleteScan(): UseDeleteScanResult {
         }
         const res = await apiPost<DeleteScanResponse>("/api/delete/scan", body);
         setDeleteJobId(res.job_id);
-        setScanResults(res.files, res.total_size);
+        setScanResults(res.files, res.total_size, res.permission_warning);
       } finally {
         setIsScanning(false);
       }

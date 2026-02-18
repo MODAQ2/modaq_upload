@@ -15,8 +15,14 @@ interface DeleteState {
   // Scan results
   scanResults: DeleteScanFile[];
   scanTotalSize: number;
+  permissionWarning: boolean;
   isScanning: boolean;
-  setScanResults: (files: DeleteScanFile[], totalSize: number) => void;
+  setScanResults: (
+    files: DeleteScanFile[],
+    totalSize: number,
+    permissionWarning: boolean,
+  ) => void;
+  setPermissionWarning: (warning: boolean) => void;
   setIsScanning: (scanning: boolean) => void;
 
   // Delete job
@@ -36,6 +42,7 @@ const initialState = {
   folderPath: "",
   scanResults: [] as DeleteScanFile[],
   scanTotalSize: 0,
+  permissionWarning: false,
   isScanning: false,
   deleteJobId: null,
   completedJob: null,
@@ -48,8 +55,9 @@ export const useDeleteStore = create<DeleteState>((set) => ({
   setStep: (step) => set({ step }),
   setFolderPath: (folderPath) => set({ folderPath }),
 
-  setScanResults: (scanResults, scanTotalSize) =>
-    set({ scanResults, scanTotalSize }),
+  setScanResults: (scanResults, scanTotalSize, permissionWarning) =>
+    set({ scanResults, scanTotalSize, permissionWarning }),
+  setPermissionWarning: (permissionWarning) => set({ permissionWarning }),
   setIsScanning: (isScanning) => set({ isScanning }),
 
   setDeleteJobId: (deleteJobId) => set({ deleteJobId }),

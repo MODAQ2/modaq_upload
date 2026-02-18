@@ -8,13 +8,14 @@
  * Step 5: Summary with results
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ProgressBar from "../components/common/ProgressBar.tsx";
 import Spinner from "../components/common/Spinner.tsx";
 import StatCard from "../components/common/StatCard.tsx";
 import DeleteConfirmation from "../components/delete/DeleteConfirmation.tsx";
 import DeleteStepper from "../components/delete/DeleteStepper.tsx";
+import FixPermissionsModal from "../components/delete/FixPermissionsModal.tsx";
 import CancelConfirmModal from "../components/upload/CancelConfirmModal.tsx";
 import FolderBrowser from "../components/upload/FolderBrowser.tsx";
 import type { FolderExclusions } from "../components/upload/FolderBrowser.tsx";
@@ -23,6 +24,7 @@ import { useDeleteScan } from "../hooks/useDeleteScan.ts";
 import { useAppStore } from "../stores/appStore.ts";
 import { useDeleteStore, type DeleteStep } from "../stores/deleteStore.ts";
 import type { DeleteScanFile } from "../types/delete.ts";
+import { LockIcon, WarningIcon } from "../utils/icons.tsx";
 import { formatBytes } from "../utils/format/bytes.ts";
 
 /** Status badge colors for file table. */
@@ -61,6 +63,7 @@ export default function DeletePage() {
     setFolderPath,
     scanResults,
     scanTotalSize,
+    permissionWarning,
     completedJob,
     isDeleting,
     reset,
@@ -77,18 +80,29 @@ export default function DeletePage() {
   const [page, setPage] = useState(0);
   const pageSize = 50;
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showFixPermModal, setShowFixPermModal] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Track exclusions so re-scan after permission fix uses the same filters
+  const lastExclusions = useRef<FolderExclusions | undefined>(undefined);
 
   // ── Step transitions ──
 
   const handleFolderSelected = useCallback(
     async (path: string, exclusions?: FolderExclusions) => {
+      lastExclusions.current = exclusions;
       setFolderPath(path);
       setStep(2);
       await scan(path, exclusions);
     },
     [setFolderPath, setStep, scan],
   );
+
+  const handlePermissionsFixed = useCallback(async () => {
+    if (folderPath) {
+      await scan(folderPath, lastExclusions.current);
+    }
+  }, [folderPath, scan]);
 
   const handleConfirmDelete = useCallback(async () => {
     setStep(4);
@@ -196,6 +210,29 @@ export default function DeletePage() {
             />
           </div>
 
+          {permissionWarning && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+              <LockIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-amber-800">
+                  Permission issues detected
+                </p>
+                <p className="text-sm text-amber-700 mt-1">
+                  Some files on this drive are owned by a different user and
+                  cannot be deleted without fixing permissions first.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowFixPermModal(true)}
+                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-800 bg-amber-100 border border-amber-300 rounded-md hover:bg-amber-200"
+                >
+                  <WarningIcon className="w-4 h-4" />
+                  Fix Permissions
+                </button>
+              </div>
+            </div>
+          )}
+
           {scanResults.length === 0 && !isScanning && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
               No uploaded MCAP files found in this folder. Only files previously
@@ -286,13 +323,20 @@ export default function DeletePage() {
               <button
                 type="button"
                 onClick={() => setStep(3)}
-                disabled={isScanning}
+                disabled={isScanning || permissionWarning}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
                 Continue to Confirmation
               </button>
             )}
           </div>
+
+          <FixPermissionsModal
+            isOpen={showFixPermModal}
+            onClose={() => setShowFixPermModal(false)}
+            folderPath={folderPath}
+            onFixed={handlePermissionsFixed}
+          />
         </div>
       )}
 
