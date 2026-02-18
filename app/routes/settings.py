@@ -2,6 +2,7 @@
 
 import os
 import signal
+import sys
 import threading
 
 from flask import Blueprint, Response, jsonify, request
@@ -255,8 +256,13 @@ def invalidate_cache() -> tuple[Response, int]:
 def shutdown_server() -> tuple[Response, int]:
     """Gracefully shut down the application server.
 
-    Sends SIGINT to the current process after a brief delay so the
-    HTTP response can be returned to the client first.
+    Detects whether we're running under gunicorn or the Flask dev server
+    and sends the appropriate signal after a brief delay so the HTTP
+    response can be returned to the client first.
+
+    - Gunicorn: sends SIGTERM to the master (parent) process, which
+      triggers a graceful shutdown of all workers.
+    - Flask dev server: sends SIGINT to the current process.
 
     Returns:
         JSON response confirming shutdown was initiated
@@ -265,7 +271,12 @@ def shutdown_server() -> tuple[Response, int]:
     log.info("app", "shutdown_requested", "Graceful shutdown requested via settings UI")
 
     def _shutdown() -> None:
-        os.kill(os.getpid(), signal.SIGINT)
+        if "gunicorn" in sys.modules:
+            # Under gunicorn, the worker's parent is the master process.
+            # SIGTERM tells the master to finish active requests and exit.
+            os.kill(os.getppid(), signal.SIGTERM)
+        else:
+            os.kill(os.getpid(), signal.SIGINT)
 
     # Delay slightly so the response reaches the client
     timer = threading.Timer(0.5, _shutdown)
