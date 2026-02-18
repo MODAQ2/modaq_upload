@@ -890,6 +890,11 @@ class UploadManager:
         # Clean up temp directory when upload completes
         self.cleanup_temp_dir(job_id)
 
+        # Send terminal event IMMEDIATELY so the frontend unblocks.
+        # Heavy I/O (logging, CSV, S3 sync) follows below.
+        if progress_callback:
+            progress_callback(job)
+
         uploaded_count = sum(1 for f in job.files if f.status == UploadStatus.COMPLETED)
         skipped_count = sum(1 for f in job.files if f.status == UploadStatus.SKIPPED)
         failed_count = sum(1 for f in job.files if f.status == UploadStatus.FAILED)
@@ -958,9 +963,6 @@ class UploadManager:
             log.sync_logs_to_s3(s3_client, s3_bucket)
         except Exception:
             logger.debug("Log sync to S3 failed", exc_info=True)
-
-        if progress_callback:
-            progress_callback(job)
 
     def analyze_and_upload_pipeline(
         self,
@@ -1257,6 +1259,11 @@ class UploadManager:
         # Clean up temp directory
         self.cleanup_temp_dir(job_id)
 
+        # Send terminal event IMMEDIATELY so the frontend unblocks.
+        # Heavy I/O (logging, CSV, S3 sync) follows below.
+        if upload_callback:
+            upload_callback(job)
+
         uploaded_count = sum(1 for f in job.files if f.status == UploadStatus.COMPLETED)
         skipped_count = sum(1 for f in job.files if f.status == UploadStatus.SKIPPED)
         failed_count = sum(1 for f in job.files if f.status == UploadStatus.FAILED)
@@ -1324,9 +1331,6 @@ class UploadManager:
             log.sync_logs_to_s3(s3_client, s3_bucket)
         except Exception:
             logger.debug("Log sync to S3 failed", exc_info=True)
-
-        if upload_callback:
-            upload_callback(job)
 
     def cancel_job(self, job_id: str) -> bool:
         """Cancel an upload job.
