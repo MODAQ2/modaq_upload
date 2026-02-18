@@ -6,6 +6,7 @@
  */
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { formatBytes } from "../../utils/format/bytes.ts";
 import AlertBanner from "../common/AlertBanner.tsx";
@@ -43,11 +44,19 @@ export default function DeleteConfirmation({
         }
       />
 
-      {/* S3 reassurance */}
+      {/* Cloud reassurance */}
       <AlertBanner
         type="shield"
-        title="S3 data will NOT be affected"
-        message="Only local copies are deleted. Your files in S3 remain safe and unchanged. Each file is verified against S3 before deletion."
+        title="Cloud storage will NOT be affected"
+        message={
+          <>
+            Only local copies are removed. Your files in{" "}
+            <Link to="/files" className="underline hover:no-underline font-medium" title="Browse uploaded files in cloud storage">
+              cloud storage
+            </Link>
+            {" "}remain safe and unchanged. Each file is verified against the cloud upload before removal.
+          </>
+        }
       />
 
       {/* Type-to-confirm */}
@@ -79,7 +88,7 @@ export default function DeleteConfirmation({
         />
         <span className="text-sm text-gray-700">
           I understand that cleared files cannot be recovered from this drive
-          and that the S3 copies have been verified.
+          and that the cloud uploads have been verified.
         </span>
       </label>
 
