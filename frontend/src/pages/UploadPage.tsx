@@ -6,14 +6,17 @@
  *   with phase-aware header, toolbar, and footer.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import Spinner from "../components/common/Spinner.tsx";
+import ActiveFilesList from "../components/upload/ActiveFilesList.tsx";
+import BatchProgress from "../components/upload/BatchProgress.tsx";
 import CancelConfirmModal from "../components/upload/CancelConfirmModal.tsx";
 import ConfirmModal from "../components/upload/ConfirmModal.tsx";
 import FolderBrowser from "../components/upload/FolderBrowser.tsx";
 import type { FolderExclusions } from "../components/upload/FolderBrowser.tsx";
 import ReviewToolbar, { StatusFilterBar } from "../components/upload/ReviewToolbar.tsx";
+import ScanProgressModal from "../components/upload/ScanProgressModal.tsx";
 import Stepper from "../components/upload/Stepper.tsx";
 import UnifiedFileTable from "../components/upload/UnifiedFileTable.tsx";
 import UploadFooter from "../components/upload/UploadFooter.tsx";
@@ -34,8 +37,9 @@ export default function UploadPage() {
     folderPath,
     setFolderPath,
     scanFolders,
-    scanTotals,
     completedJob,
+    batchState,
+    isBatchProcessing,
     reset,
   } = useUploadStore();
 
@@ -47,6 +51,7 @@ export default function UploadPage() {
     isScanning,
     scanComplete,
     folders,
+    foldersTotal,
     totals,
   } = useFolderScan();
 
@@ -89,28 +94,20 @@ export default function UploadPage() {
   const [pendingSelectedPaths, setPendingSelectedPaths] = useState<string[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
 
+  // Delay scan modal by 500 ms — fast/cached scans complete before the timer
+  // fires, so the modal never flashes for them.
+  const [showScanModal, setShowScanModal] = useState(false);
+  useEffect(() => {
+    if (!isScanning) {
+      setShowScanModal(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowScanModal(true), 500);
+    return () => clearTimeout(timer);
+  }, [isScanning]);
+
   // Derive phase from step
   const phase: UploadPhase = step <= 2 ? "review" : step === 3 ? "uploading" : "summary";
-
-  // ── Sync FileStore from scan data as folders arrive ──
-
-  const prevFoldersRef = useRef(folders);
-  if (folders !== prevFoldersRef.current) {
-    prevFoldersRef.current = folders;
-    if (folders.length > 0 && step >= 2) {
-      store.buildFromScan(folders);
-      // Auto-select new files
-      const newSelected = new Set<string>();
-      for (const folder of folders) {
-        for (const file of folder.files) {
-          if (!file.already_uploaded) {
-            newSelected.add(file.path);
-          }
-        }
-      }
-      setSelectedPaths(newSelected);
-    }
-  }
 
   // ── Freeze/unfreeze sort on phase transitions ──
 
@@ -121,16 +118,39 @@ export default function UploadPage() {
 
   // ── Step transitions ──
 
-  /** Step 1 -> 2: User selected a folder. Start scanning and advance. */
+  /** Step 1: User selected a folder. Start scanning (stay on Step 1 while scanning). */
   const handleFolderSelected = useCallback(
     async (path: string, exclusions?: FolderExclusions) => {
       store.clear();
       setFolderPath(path);
-      setStep(2);
+      // Stay on Step 1 while scanning - auto-advance when complete
       await startScan(path, false, exclusions);
     },
-    [setFolderPath, setStep, startScan, store],
+    [setFolderPath, startScan, store],
   );
+
+  /** Auto-advance to Step 2 when scan completes.
+   *
+   * We populate the FileStore here, right before advancing, because by the time
+   * scanComplete becomes true the folders array reference has already settled —
+   * any render-time ref-comparison trick would have already consumed the change
+   * while step was still 1 and skipped the buildFromScan call.
+   */
+  useEffect(() => {
+    if (step === 1 && scanComplete && folders.length > 0) {
+      store.buildFromScan(folders);
+      const newSelected = new Set<string>();
+      for (const folder of folders) {
+        for (const file of folder.files) {
+          if (!file.already_uploaded) {
+            newSelected.add(file.path);
+          }
+        }
+      }
+      setSelectedPaths(newSelected);
+      setStep(2);
+    }
+  }, [step, scanComplete, folders, store, setSelectedPaths, setStep]);
 
   /** Step 2: User clicks "Start Upload" — show confirmation modal. */
   const handleStartUploadClick = useCallback(() => {
@@ -179,6 +199,15 @@ export default function UploadPage() {
     store.clear();
     reset();
   }, [reset, store]);
+
+  /** Cancel scan and return to Step 1 if needed. */
+  const handleCancelScan = useCallback(async () => {
+    await cancelScan();
+    // If we're on a later step during scan (shouldn't happen with new flow, but handle it)
+    if (step > 1) {
+      setStep(1);
+    }
+  }, [cancelScan, step, setStep]);
 
   /** Back from step 2 -> step 1. */
   const handleBack = useCallback(async () => {
@@ -291,9 +320,30 @@ export default function UploadPage() {
     downloadUploadCsv(Array.from(store.getAllRows().values()), jobId);
   }, [completedJob, store]);
 
-  // ── Active totals for header ──
-
-  const activeTotals = scanComplete ? totals : scanTotals;
+  // ── Review KPIs: what is actually going to happen when the user clicks Upload ──
+  //
+  // toUpload    — new selected files (will be sent to S3)
+  // uploadSize  — bytes of those new files
+  // alreadyOnS3 — selected files already there (will be skipped)
+  // totalInFolder — all files found in the scan (context denominator)
+  const activeTotals = useMemo(() => {
+    let toUpload = 0;
+    let uploadSize = 0;
+    let alreadyOnS3 = 0;
+    for (const file of allFiles) {
+      if (selectedPaths.has(file.path)) {
+        if (file.alreadyUploaded) {
+          alreadyOnS3++;
+        } else {
+          toUpload++;
+          uploadSize += file.size;
+        }
+      }
+    }
+    return { toUpload, uploadSize, alreadyOnS3, totalInFolder: allFiles.length };
+  // `files` dep ensures we recompute when the store snapshot changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allFiles, selectedPaths, files]);
 
   // ── Render ──
 
@@ -371,20 +421,36 @@ export default function UploadPage() {
             />
           )}
 
-          {/* The unified file table — stays mounted across phases */}
-          <UnifiedFileTable
-            phase={phase}
-            files={files}
-            sortKey={store.getSortKey()}
-            sortDir={store.getSortDir()}
-            onSort={(key) => store.setSort(key)}
-            isSortFrozen={store.isFrozen()}
-            selectedPaths={selectedPaths}
-            onToggleFile={toggleFile}
-            onToggleAllFiltered={toggleAllFiltered}
-            headerChecked={headerChecked}
-            headerIndeterminate={headerIndeterminate}
-          />
+          {/* Batch processing UI for upload phase with large jobs */}
+          {phase === "uploading" && isBatchProcessing ? (
+            <>
+              <BatchProgress
+                batchState={batchState}
+                jobProgressPercent={uploadJob.progressPercent}
+                jobFilesCompleted={uploadJob.filesProcessed}
+                jobFilesTotal={uploadJob.totalFiles}
+                jobFilesUploaded={uploadJob.statusCounts.uploaded}
+                jobFilesFailed={uploadJob.statusCounts.failed}
+                isRunning={uploadJob.isRunning}
+              />
+              <ActiveFilesList files={uploadJob.activeFiles} />
+            </>
+          ) : (
+            /* The unified file table — stays mounted across phases */
+            <UnifiedFileTable
+              phase={phase}
+              files={files}
+              sortKey={store.getSortKey()}
+              sortDir={store.getSortDir()}
+              onSort={(key) => store.setSort(key)}
+              isSortFrozen={store.isFrozen()}
+              selectedPaths={selectedPaths}
+              onToggleFile={toggleFile}
+              onToggleAllFiltered={toggleAllFiltered}
+              headerChecked={headerChecked}
+              headerIndeterminate={headerIndeterminate}
+            />
+          )}
 
           {/* Bottom action buttons */}
           <UploadFooter
@@ -432,6 +498,18 @@ export default function UploadPage() {
           )}
         </div>
       )}
+
+      {/* Scan progress modal - only shown after 500 ms delay so fast/cached
+          scans never flash the modal at all. */}
+      <ScanProgressModal
+        isOpen={showScanModal && !showConfirmModal}
+        foldersScanned={folders.length}
+        foldersTotal={foldersTotal}
+        totalFiles={totals.totalFiles}
+        totalSize={totals.totalSize}
+        folderPath={folderPath}
+        onCancel={handleCancelScan}
+      />
     </div>
   );
 }
