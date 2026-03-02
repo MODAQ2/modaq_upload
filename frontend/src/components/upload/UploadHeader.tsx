@@ -22,7 +22,12 @@ interface UploadHeaderProps {
   phase: UploadPhase;
 
   // Review data
-  totals: { totalFiles: number; alreadyUploaded: number; totalSize: number };
+  totals: {
+    toUpload: number;
+    uploadSize: number;
+    alreadyOnS3: number;
+    totalInFolder: number;
+  };
   isScanning: boolean;
   foldersFound: number;
 
@@ -60,7 +65,13 @@ export default function UploadHeader({
   onFilterClick,
 }: UploadHeaderProps) {
   if (phase === "review") {
-    return <ReviewHeader totals={totals} isScanning={isScanning} foldersFound={foldersFound} />;
+    return (
+      <ReviewHeader
+        totals={totals}
+        isScanning={isScanning}
+        foldersFound={foldersFound}
+      />
+    );
   }
 
   if (phase === "uploading") {
@@ -89,25 +100,46 @@ function ReviewHeader({
   isScanning,
   foldersFound,
 }: {
-  totals: { totalFiles: number; alreadyUploaded: number; totalSize: number };
+  totals: {
+    toUpload: number;
+    uploadSize: number;
+    alreadyOnS3: number;
+    totalInFolder: number;
+  };
   isScanning: boolean;
   foldersFound: number;
 }) {
-  const newFiles = totals.totalFiles - totals.alreadyUploaded;
   return (
     <div className="space-y-3 animate-in fade-in duration-200">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard value={totals.totalFiles.toLocaleString()} label="Total Files" color="text-nlr-blue" />
-        <StatCard value={formatBytes(totals.totalSize)} label="Total Size" color="text-nlr-blue" />
-        <StatCard value={totals.alreadyUploaded.toLocaleString()} label="Already Uploaded" color="text-yellow-500" />
-        <StatCard value={newFiles.toLocaleString()} label="New Files" color="text-green-600" />
+        <StatCard
+          value={totals.toUpload.toLocaleString()}
+          label="Files to Upload"
+          color="text-green-600"
+        />
+        <StatCard
+          value={formatBytes(totals.uploadSize)}
+          label="Upload Size"
+          color="text-nlr-blue"
+        />
+        <StatCard
+          value={totals.alreadyOnS3.toLocaleString()}
+          label="Already Uploaded"
+          color="text-yellow-500"
+        />
+        <StatCard
+          value={totals.totalInFolder.toLocaleString()}
+          label="In Folder"
+          color="text-gray-500"
+        />
       </div>
 
       {isScanning && (
         <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
           <Spinner size="sm" />
           <span className="text-sm text-blue-700">
-            Scanning folders... ({foldersFound} folder{foldersFound !== 1 ? "s" : ""} found so far)
+            Scanning folders... ({foldersFound} folder
+            {foldersFound !== 1 ? "s" : ""} found so far)
           </span>
         </div>
       )}
@@ -144,7 +176,9 @@ function UploadingHeader({
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-gray-900">
-            {isRunning && filesProcessed < totalFiles ? "Uploading..." : "Upload Complete"}
+            {isRunning && filesProcessed < totalFiles
+              ? "Uploading..."
+              : "Upload Complete"}
           </h3>
           {isRunning && filesProcessed < totalFiles && <Spinner size="sm" />}
         </div>
@@ -204,11 +238,12 @@ function SummaryHeader({
 }) {
   if (!job) return null;
 
-  const headlineColor = job.files_failed > 0
-    ? "text-yellow-600"
-    : job.cancelled
-      ? "text-gray-600"
-      : "text-green-600";
+  const headlineColor =
+    job.files_failed > 0
+      ? "text-yellow-600"
+      : job.cancelled
+        ? "text-gray-600"
+        : "text-green-600";
 
   const headlineText = job.cancelled
     ? "Upload Cancelled"
@@ -230,32 +265,57 @@ function SummaryHeader({
           onClick={() => onFilterClick?.("completed")}
           className="text-left"
         >
-          <StatCard value={job.files_uploaded.toLocaleString()} label="Uploaded" color="text-green-600" />
+          <StatCard
+            value={job.files_uploaded.toLocaleString()}
+            label="Uploaded"
+            color="text-green-600"
+          />
         </button>
         <button
           type="button"
           onClick={() => onFilterClick?.("skipped")}
           className="text-left"
         >
-          <StatCard value={job.files_skipped.toLocaleString()} label="Skipped" color="text-yellow-500" />
+          <StatCard
+            value={job.files_skipped.toLocaleString()}
+            label="Skipped"
+            color="text-yellow-500"
+          />
         </button>
         <button
           type="button"
           onClick={() => onFilterClick?.("failed")}
           className="text-left"
         >
-          <StatCard value={job.files_failed.toLocaleString()} label="Failed" color="text-red-500" />
+          <StatCard
+            value={job.files_failed.toLocaleString()}
+            label="Failed"
+            color="text-red-500"
+          />
         </button>
-        <StatCard value={job.successfully_uploaded_bytes_formatted} label="Data Uploaded" color="text-nlr-blue" />
-        <StatCard value={formatDuration(job.total_upload_duration_seconds)} label="Duration" color="text-nlr-blue" />
-        <StatCard value={formatSpeed(job.average_upload_speed_mbps)} label="Avg Speed" color="text-nlr-blue" />
+        <StatCard
+          value={job.successfully_uploaded_bytes_formatted}
+          label="Data Uploaded"
+          color="text-nlr-blue"
+        />
+        <StatCard
+          value={formatDuration(job.total_upload_duration_seconds)}
+          label="Duration"
+          color="text-nlr-blue"
+        />
+        <StatCard
+          value={formatSpeed(job.average_upload_speed_mbps)}
+          label="Avg Speed"
+          color="text-nlr-blue"
+        />
       </div>
 
       {job.files_failed > 0 && (
         <div className="flex items-center gap-2 p-3 bg-red-50 rounded-lg border border-red-200 text-sm text-red-700">
           <WarningIcon className="w-4 h-4 flex-shrink-0" />
           <span>
-            <strong>{job.files_failed}</strong> file{job.files_failed !== 1 ? "s" : ""} failed to upload.
+            <strong>{job.files_failed}</strong> file
+            {job.files_failed !== 1 ? "s" : ""} failed to upload.
             <button
               type="button"
               onClick={() => onFilterClick?.("failed")}
@@ -293,7 +353,9 @@ function StatusCounterButton({
       onClick={onClick}
       className={`${bgColor} ${borderColor} border rounded-lg p-3 text-center hover:opacity-80 transition-opacity cursor-pointer`}
     >
-      <div className={`text-xl font-bold ${color}`}>{count.toLocaleString()}</div>
+      <div className={`text-xl font-bold ${color}`}>
+        {count.toLocaleString()}
+      </div>
       <div className="text-xs text-gray-500 mt-0.5">{label}</div>
     </button>
   );
