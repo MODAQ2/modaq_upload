@@ -167,8 +167,23 @@ def is_multipart_etag(etag: str) -> bool:
 class DeleteManager:
     """Manages local file deletion jobs with MD5 verification against S3."""
 
-    def __init__(self) -> None:
+    def __init__(self, batch_config: dict[str, Any] | None = None) -> None:
         self.jobs: dict[str, DeleteJob] = {}
+
+        # Load batch processing configuration
+        if batch_config is None:
+            from app.config import get_settings
+
+            settings = get_settings()
+            batch_config = settings.get_batch_config()
+
+        # Import BatchConfig and BatchProcessor
+        from app.services.batch_processor import BatchConfig, BatchProcessor
+
+        self.batch_config = BatchConfig.from_dict(batch_config)
+        self.batch_processor = (
+            BatchProcessor(self.batch_config) if self.batch_config.enabled else None
+        )
 
     def scan_folder(
         self,
@@ -237,6 +252,7 @@ class DeleteManager:
         aws_profile: str,
         aws_region: str,
         progress_callback: Callable[[DeleteJob], None] | None = None,
+        batch_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> bool:
         """Start verification and deletion for a job.
 
@@ -249,6 +265,7 @@ class DeleteManager:
             aws_profile: AWS profile name
             aws_region: AWS region
             progress_callback: Called after each file status change
+            batch_callback: Called for batch-level events (batch_started, batch_completed)
 
         Returns:
             True if job was started
@@ -328,9 +345,7 @@ class DeleteManager:
                 return
 
             try:
-                metadata = get_object_metadata(
-                    s3_client, file_state.s3_bucket, file_state.s3_path
-                )
+                metadata = get_object_metadata(s3_client, file_state.s3_bucket, file_state.s3_path)
                 if not metadata["success"]:
                     with job.lock:
                         file_state.status = DeleteStatus.FAILED
@@ -379,8 +394,50 @@ class DeleteManager:
             if progress_callback:
                 progress_callback(job)
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            executor.map(verify_against_s3, job.files)
+        # Phase 2: Verify files against S3
+        # Use batch processing for large jobs to improve performance and UI responsiveness
+        use_batch_processing = (
+            self.batch_processor is not None
+            and self.batch_processor.should_use_batch_processing(len(job.files))
+        )
+
+        if use_batch_processing and self.batch_processor:
+            log.info(
+                "delete",
+                "using_batch_processing",
+                f"Using batch processing for {len(job.files)} files",
+                {"job_id": job_id, "total_files": len(job.files)},
+            )
+
+            # Process verification in batches
+            def check_cancelled() -> bool:
+                return job.cancelled
+
+            # Create a wrapper that uses _verify_batch
+            def process_batch_fn(
+                batch_files: list[FileDeleteState], batch_id: int, total_batches: int
+            ) -> dict[str, Any]:
+                return self._verify_batch(
+                    batch_files,
+                    batch_id,
+                    total_batches,
+                    job,
+                    s3_client,
+                    progress_callback,
+                    batch_callback,
+                )
+
+            # Use batch processor
+            self.batch_processor.process_batches(
+                job.files,
+                process_batch_fn,
+                progress_callback=None,  # We handle progress in _verify_batch
+                check_cancelled=check_cancelled,
+            )
+        else:
+            # Traditional non-batch processing
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                executor.map(verify_against_s3, job.files)
 
         if job.cancelled:
             self._finalize_cancelled(job, progress_callback)
@@ -450,6 +507,132 @@ class DeleteManager:
             progress_callback(job)
 
         return True
+
+    def _verify_batch(
+        self,
+        batch_files: list[FileDeleteState],
+        batch_id: int,
+        total_batches: int,
+        job: DeleteJob,
+        s3_client: Any,
+        progress_callback: Callable[[DeleteJob], None] | None,
+        batch_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> dict[str, Any]:
+        """Verify a batch of files against S3.
+
+        Args:
+            batch_files: Files to verify in this batch
+            batch_id: 0-indexed batch number
+            total_batches: Total number of batches
+            job: The delete job
+            s3_client: S3 client for HEAD requests
+            progress_callback: Called after each file verification
+            batch_callback: Called for batch-level events
+
+        Returns:
+            Dict with batch statistics
+        """
+        # Send batch_started event
+        if batch_callback:
+            batch_callback(
+                {
+                    "type": "batch_started",
+                    "batch_id": batch_id,
+                    "total_batches": total_batches,
+                    "files_in_batch": len(batch_files),
+                }
+            )
+
+        verified = 0
+        failed = 0
+
+        def verify_against_s3(file_state: FileDeleteState) -> None:
+            """Verify a file against S3 using HEAD + size (primary) and MD5 (secondary)."""
+            nonlocal verified, failed
+
+            if job.cancelled:
+                return
+            if file_state.status == DeleteStatus.FAILED:
+                failed += 1
+                return
+
+            try:
+                metadata = get_object_metadata(s3_client, file_state.s3_bucket, file_state.s3_path)
+                if not metadata["success"]:
+                    with job.lock:
+                        file_state.status = DeleteStatus.FAILED
+                        file_state.error_message = (
+                            f"S3 object not found: {metadata.get('error', 'unknown')}"
+                        )
+                    failed += 1
+                    return
+
+                s3_size = int(metadata["size"])
+                etag = str(metadata["etag"])
+                file_state.s3_etag = etag
+                file_state.s3_size = s3_size
+
+                # Primary check: file size must match
+                if s3_size != file_state.file_size:
+                    with job.lock:
+                        file_state.status = DeleteStatus.MISMATCH
+                        file_state.error_message = (
+                            f"Size mismatch: local={file_state.file_size}, s3={s3_size}"
+                        )
+                    failed += 1
+                    return
+
+                # Secondary check: MD5 vs ETag (only possible for single-part uploads)
+                if is_multipart_etag(etag):
+                    with job.lock:
+                        file_state.status = DeleteStatus.VERIFIED
+                        file_state.verification = "size"
+                    verified += 1
+                else:
+                    if etag == file_state.local_md5:
+                        with job.lock:
+                            file_state.status = DeleteStatus.VERIFIED
+                            file_state.verification = "md5+size"
+                        verified += 1
+                    else:
+                        with job.lock:
+                            file_state.status = DeleteStatus.MISMATCH
+                            file_state.error_message = (
+                                f"MD5 mismatch: local={file_state.local_md5}, s3={etag}"
+                            )
+                        failed += 1
+            except Exception as e:
+                with job.lock:
+                    file_state.status = DeleteStatus.FAILED
+                    file_state.error_message = f"S3 verification failed: {e}"
+                failed += 1
+
+            if progress_callback:
+                progress_callback(job)
+
+        # Process batch with ThreadPoolExecutor
+        max_workers = self.batch_config.max_workers if self.batch_processor else 4
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            executor.map(verify_against_s3, batch_files)
+
+        # Send batch_completed event
+        if batch_callback:
+            batch_callback(
+                {
+                    "type": "batch_completed",
+                    "batch_id": batch_id,
+                    "files_verified": verified,
+                    "files_failed": failed,
+                }
+            )
+
+        return {
+            "success": not job.cancelled,
+            "processed": len(batch_files),
+            "uploaded": verified,  # "uploaded" maps to "verified" for delete operations
+            "failed": failed,
+            "bytes_uploaded": 0,  # Not applicable for delete
+        }
 
     def _finalize_cancelled(
         self,
