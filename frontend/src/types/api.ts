@@ -332,6 +332,16 @@ export interface S3Breadcrumb {
 
 // ── Settings types ──
 
+export type ValueSourceType = "builtin" | "default_file" | "settings_file" | "env";
+
+export interface ValueSource {
+  source: ValueSourceType;
+  /** Absolute path to the file (present for default_file and settings_file). */
+  path?: string;
+  /** Environment variable name (present for env). */
+  env_var?: string;
+}
+
 export interface AppSettings {
   aws_profile: string;
   aws_region: string;
@@ -339,6 +349,9 @@ export interface AppSettings {
   default_upload_folder: string;
   display_name: string;
   log_directory: string;
+  batch_processing?: BatchProcessingSettings;
+  /** Provenance metadata returned by the API — not sent on PUT. */
+  value_sources?: Record<string, ValueSource>;
 }
 
 export interface VersionInfo {
