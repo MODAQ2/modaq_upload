@@ -31,6 +31,17 @@ def app() -> Generator[Flask, None, None]:
         )
         temp_settings = f.name
 
+    # Ensure frontend/dist/index.html exists so SPA routes can serve it
+    from app.routes.main import FRONTEND_DIST
+
+    dist_created = False
+    index_path = os.path.join(FRONTEND_DIST, "index.html")
+    if not os.path.exists(index_path):
+        os.makedirs(FRONTEND_DIST, exist_ok=True)
+        dist_created = True
+        with open(index_path, "w") as f:
+            f.write('<!doctype html><html><body><div id="root"></div></body></html>')
+
     # Create the app (settings will be loaded from default)
     _ = SETTINGS_FILE  # Reference to avoid unused import warning
 
@@ -41,6 +52,8 @@ def app() -> Generator[Flask, None, None]:
 
     # Cleanup
     os.unlink(temp_settings)
+    if dist_created:
+        os.unlink(index_path)
 
 
 @pytest.fixture

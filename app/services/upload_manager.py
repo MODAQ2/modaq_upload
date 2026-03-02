@@ -6,7 +6,13 @@ import shutil
 import threading
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    as_completed,
+    wait,
+)
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -16,6 +22,7 @@ from typing import Any
 from app.services import mcap_service, s3_service
 from app.services.cache_service import get_cache_service
 from app.services.log_service import get_log_service
+from app.services.s3_service import UploadCancelledError
 from app.services.utils import format_file_size
 
 logger = logging.getLogger(__name__)
@@ -24,14 +31,18 @@ logger = logging.getLogger(__name__)
 EPOCH_CUTOFF = datetime(1980, 1, 1, tzinfo=UTC)
 
 
-def _extract_start_time_worker(local_path: str) -> datetime | str:
+def _extract_start_time_worker(local_path: str, skip_validation: bool = False) -> datetime | str:
     """Worker function for ProcessPoolExecutor — must be top-level for pickling.
+
+    Args:
+        local_path: Path to the MCAP file
+        skip_validation: If True, skip MCAP parsing and extract from filename only
 
     Returns:
         datetime on success, or error message string on failure.
     """
     try:
-        return mcap_service.extract_start_time(local_path)
+        return mcap_service.extract_start_time(local_path, skip_validation=skip_validation)
     except Exception as e:
         return str(e)
 
@@ -196,6 +207,33 @@ class UploadJob:
             return round(self.successfully_uploaded_bytes / duration / 1024 / 1024 * 8, 2)
         return None
 
+    def to_progress_dict(self) -> dict[str, Any]:
+        """Lightweight dict for SSE progress events.
+
+        Includes only job-level stats and currently active files (uploading/analyzing),
+        dropping the full 20K-file array that to_dict() includes.
+        """
+        active_files = [
+            f.to_dict()
+            for f in self.files
+            if f.status in (UploadStatus.UPLOADING, UploadStatus.ANALYZING)
+        ]
+        return {
+            "job_id": self.job_id,
+            "status": self.status.value,
+            "progress_percent": self.progress_percent,
+            "files_completed": self.files_completed,
+            "total_files": len(self.files),
+            "uploaded_bytes_formatted": format_file_size(self.uploaded_bytes),
+            "total_bytes_formatted": format_file_size(self.total_bytes),
+            "eta_seconds": self.eta_seconds,
+            "files_failed": self.files_failed,
+            "files_skipped": sum(1 for f in self.files if f.status == UploadStatus.SKIPPED),
+            "files_uploaded": sum(1 for f in self.files if f.status == UploadStatus.COMPLETED),
+            "cancelled": self.cancelled,
+            "files": active_files,
+        }
+
     def resolve_analysis_status(self) -> None:
         """Set job status based on file analysis results."""
         if any(f.status == UploadStatus.READY for f in self.files):
@@ -240,13 +278,62 @@ class UploadJob:
         }
 
 
+@dataclass
+class ScannedFolder:
+    """Results for a single scanned subfolder."""
+
+    folder_path: str
+    relative_path: str
+    files: list[dict[str, Any]]
+    total_files: int = 0
+    already_uploaded: int = 0
+    all_uploaded: bool = False
+    error: str | None = None
+
+
+@dataclass
+class ScanJob:
+    """Tracks an async folder scan job."""
+
+    job_id: str
+    root_folder: str
+    status: str = "scanning"  # scanning | completed | failed | cancelled
+    cancelled: bool = False
+    folders_scanned: int = 0
+    folders_total: int = 0
+    total_files_found: int = 0
+    total_already_uploaded: int = 0
+    total_size: int = 0
+    scanned_folders: list[dict[str, Any]] = field(default_factory=list)
+    excluded_subfolders: list[str] = field(default_factory=list)
+    excluded_files: list[str] = field(default_factory=list)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+
 class UploadManager:
     """Manages upload jobs and their execution."""
 
-    def __init__(self, max_workers: int = 4) -> None:
+    def __init__(self, max_workers: int = 4, batch_config: dict[str, Any] | None = None) -> None:
         self.jobs: dict[str, UploadJob] = {}
+        self.scan_jobs: dict[str, ScanJob] = {}
         self.max_workers = max_workers
         self._lock = threading.Lock()
+
+        # Load batch processing configuration
+        if batch_config is None:
+            from app.config import get_settings
+
+            settings = get_settings()
+            batch_config = settings.get_batch_config()
+
+        # Import BatchConfig and BatchProcessor
+        from app.services.batch_processor import BatchConfig, BatchProcessor
+
+        self.batch_config = BatchConfig.from_dict(batch_config)
+        self.batch_processor = (
+            BatchProcessor(self.batch_config) if self.batch_config.enabled else None
+        )
 
     def create_job(
         self,
@@ -305,6 +392,7 @@ class UploadManager:
         aws_profile: str,
         aws_region: str,
         s3_bucket: str,
+        skip_validation: bool | None = None,
     ) -> UploadJob | None:
         """Analyze files in a job - extract timestamps and check for duplicates.
 
@@ -313,10 +401,17 @@ class UploadManager:
             aws_profile: AWS profile to use
             aws_region: AWS region
             s3_bucket: S3 bucket to check for duplicates
+            skip_validation: If True, skip MCAP parsing. If None, use live settings.
 
         Returns:
             The updated UploadJob or None if not found
         """
+        if skip_validation is None:
+            from app.config import get_settings
+
+            skip_validation = bool(
+                get_settings().batch_processing.get("skip_mcap_validation", False)
+            )
         job = self.get_job(job_id)
         if not job:
             return None
@@ -338,7 +433,9 @@ class UploadManager:
             file_state.status = UploadStatus.ANALYZING
             try:
                 # Extract timestamp from MCAP
-                start_time = mcap_service.extract_start_time(file_state.local_path)
+                start_time = mcap_service.extract_start_time(
+                    file_state.local_path, skip_validation=skip_validation
+                )
                 file_state.start_time = start_time
 
                 # Generate S3 path
@@ -381,9 +478,7 @@ class UploadManager:
         if cache_result is not None:
             file_state.is_duplicate = cache_result
         else:
-            file_state.is_duplicate = s3_service.check_file_exists(
-                s3_client, s3_bucket, s3_path
-            )
+            file_state.is_duplicate = s3_service.check_file_exists(s3_client, s3_bucket, s3_path)
             if use_cache:
                 cache = get_cache_service()
                 cache.update_cache(
@@ -403,6 +498,7 @@ class UploadManager:
         job_id: str = "",
         progress_callback: Callable[["UploadJob", FileUploadState], None] | None = None,
         job: "UploadJob | None" = None,
+        skip_validation: bool = False,
     ) -> FileUploadState:
         """Analyze a single file - extract timestamp and check for duplicates.
 
@@ -414,6 +510,7 @@ class UploadManager:
             job_id: The parent job ID (for logging)
             progress_callback: Optional callback fired when file starts analyzing
             job: The parent UploadJob (needed for callback)
+            skip_validation: If True, skip MCAP parsing and extract from filename only
 
         Returns:
             The updated FileUploadState
@@ -424,7 +521,9 @@ class UploadManager:
             progress_callback(job, file_state)
         try:
             # Extract timestamp from MCAP
-            start_time = mcap_service.extract_start_time(file_state.local_path)
+            start_time = mcap_service.extract_start_time(
+                file_state.local_path, skip_validation=skip_validation
+            )
             file_state.start_time = start_time
 
             # Check if timestamp is valid (after 1980)
@@ -497,6 +596,7 @@ class UploadManager:
         s3_bucket: str,
         progress_callback: Callable[["UploadJob", FileUploadState], None] | None = None,
         use_cache: bool = True,
+        skip_validation: bool | None = None,
     ) -> UploadJob | None:
         """Analyze files in a job asynchronously with parallel processing.
 
@@ -507,10 +607,17 @@ class UploadManager:
             s3_bucket: S3 bucket to check for duplicates
             progress_callback: Optional callback called after each file completes
             use_cache: Whether to use cache for duplicate checking
+            skip_validation: If True, skip MCAP parsing. If None, use live settings.
 
         Returns:
             The updated UploadJob or None if not found
         """
+        if skip_validation is None:
+            from app.config import get_settings
+
+            skip_validation = bool(
+                get_settings().batch_processing.get("skip_mcap_validation", False)
+            )
         log = get_log_service()
         job = self.get_job(job_id)
         if not job:
@@ -524,12 +631,6 @@ class UploadManager:
             f"Starting analysis of {len(job.files)} files",
             {"job_id": job_id, "total_files": len(job.files)},
         )
-
-        # Keep files as PENDING; workers will mark ANALYZING when they start.
-        # Send initial callbacks so frontend knows the job started and can show queue.
-        if progress_callback:
-            for file_state in job.files:
-                progress_callback(job, file_state)
 
         # Create S3 client for duplicate checking
         try:
@@ -547,37 +648,55 @@ class UploadManager:
         # parallelism across cores, bypassing the GIL.
         cpu_workers = max(1, (os.cpu_count() or 4) - 1)
         for file_state in job.files:
-            file_state.status = UploadStatus.ANALYZING
+            file_state.status = UploadStatus.PENDING
+
+        files_iter_async = iter(job.files)
+        active_async: dict[Any, FileUploadState] = {}
+
+        def _submit_next_async(proc_executor: ProcessPoolExecutor) -> None:
+            fs = next(files_iter_async, None)
+            if fs is None or job.cancelled:
+                return
+            fs.status = UploadStatus.ANALYZING
             if progress_callback:
-                progress_callback(job, file_state)
+                progress_callback(job, fs)  # "queued → analyzing" event
+            fut = proc_executor.submit(_extract_start_time_worker, fs.local_path, skip_validation)
+            active_async[fut] = fs
 
         with ProcessPoolExecutor(max_workers=cpu_workers) as proc_executor:
-            parse_futures = {
-                proc_executor.submit(
-                    _extract_start_time_worker, file_state.local_path
-                ): file_state
-                for file_state in job.files
-            }
-            for future in as_completed(parse_futures):
-                file_state = parse_futures[future]
-                result = future.result()
-                if isinstance(result, str):
-                    # Error message returned from worker
-                    file_state.status = UploadStatus.FAILED
-                    file_state.error_message = result
-                    log.error(
-                        "analysis",
-                        "file_analysis_failed",
-                        f"Failed to analyze {file_state.filename}: {result}",
-                        {"job_id": job_id, "filename": file_state.filename, "error": result},
-                    )
-                else:
-                    file_state.start_time = result
-                    naive_start = mcap_service.to_naive_utc(result)
-                    file_state.is_valid = naive_start >= EPOCH_CUTOFF.replace(tzinfo=None)
-                    file_state.s3_path = mcap_service.generate_s3_path(result, file_state.filename)
-                if progress_callback:
-                    progress_callback(job, file_state)
+            for _ in range(cpu_workers):
+                _submit_next_async(proc_executor)
+
+            while active_async:
+                if job.cancelled:
+                    for f in list(active_async.keys()):
+                        f.cancel()
+                    break
+
+                done, _ = wait(list(active_async.keys()), return_when=FIRST_COMPLETED)
+                for future in done:
+                    file_state = active_async.pop(future)
+                    result = future.result()
+                    if isinstance(result, str):
+                        # Error message returned from worker
+                        file_state.status = UploadStatus.FAILED
+                        file_state.error_message = result
+                        log.error(
+                            "analysis",
+                            "file_analysis_failed",
+                            f"Failed to analyze {file_state.filename}: {result}",
+                            {"job_id": job_id, "filename": file_state.filename, "error": result},
+                        )
+                    else:
+                        file_state.start_time = result
+                        naive_start = mcap_service.to_naive_utc(result)
+                        file_state.is_valid = naive_start >= EPOCH_CUTOFF.replace(tzinfo=None)
+                        file_state.s3_path = mcap_service.generate_s3_path(
+                            result, file_state.filename
+                        )
+                    if progress_callback:
+                        progress_callback(job, file_state)
+                    _submit_next_async(proc_executor)
 
         # Phase 2: S3 duplicate checks (I/O-bound) — threads are fine here.
         parsed_files = [f for f in job.files if f.status != UploadStatus.FAILED]
@@ -596,7 +715,7 @@ class UploadManager:
             for fut in as_completed(dup_futures):
                 file_state = dup_futures[fut]
                 try:
-                    future.result()
+                    fut.result()
                     file_state.status = UploadStatus.READY
                     log.info(
                         "analysis",
@@ -727,6 +846,11 @@ class UploadManager:
                     fs: FileUploadState,
                 ) -> Callable[[], Any]:
                     def upload_task() -> Any:
+                        if job.cancelled:
+                            with job.lock:
+                                fs.status = UploadStatus.CANCELLED
+                            return None
+
                         # Mark UPLOADING inside the worker so files stay READY until picked up
                         with job.lock:
                             fs.status = UploadStatus.UPLOADING
@@ -757,6 +881,7 @@ class UploadManager:
                             s3_bucket,
                             fs.s3_path,
                             byte_callback,
+                            cancel_check=lambda: job.cancelled,
                         )
 
                     return upload_task
@@ -766,12 +891,12 @@ class UploadManager:
 
             # Process results as they complete
             for future in as_completed(futures):
-                if job.cancelled:
-                    break
-
                 file_state = futures[future]
                 try:
                     result = future.result()
+                    if result is None:
+                        # Task was cancelled before starting
+                        continue
                     file_state.upload_completed_at = datetime.now(UTC)
                     if result["success"]:
                         file_state.status = UploadStatus.COMPLETED
@@ -813,6 +938,10 @@ class UploadManager:
                                 "error": file_state.error_message,
                             },
                         )
+                except UploadCancelledError:
+                    with job.lock:
+                        file_state.status = UploadStatus.CANCELLED
+                        file_state.upload_completed_at = datetime.now(UTC)
                 except Exception as e:
                     file_state.upload_completed_at = datetime.now(UTC)
                     file_state.status = UploadStatus.FAILED
@@ -840,6 +969,11 @@ class UploadManager:
 
         # Clean up temp directory when upload completes
         self.cleanup_temp_dir(job_id)
+
+        # Send terminal event IMMEDIATELY so the frontend unblocks.
+        # Heavy I/O (logging, CSV, S3 sync) follows below.
+        if progress_callback:
+            progress_callback(job)
 
         uploaded_count = sum(1 for f in job.files if f.status == UploadStatus.COMPLETED)
         skipped_count = sum(1 for f in job.files if f.status == UploadStatus.SKIPPED)
@@ -878,19 +1012,23 @@ class UploadManager:
         # Save per-job JSONL summary
         try:
             completed_at = job.completed_at or datetime.now(UTC)
-            log.save_job_jsonl(job_id, {
-                "timestamp": completed_at.isoformat(),
-                "event": "upload_job_completed",
-                "job_id": job_id,
-                "status": job.status.value,
-                "uploaded": uploaded_count,
-                "skipped": skipped_count,
-                "failed": failed_count,
-                "total_bytes_uploaded": job.successfully_uploaded_bytes,
-                "duration_seconds": job.total_upload_duration_seconds,
-                "avg_speed_mbps": job.average_upload_speed_mbps,
-                "files": file_summary,
-            }, completed_at)
+            log.save_job_jsonl(
+                job_id,
+                {
+                    "timestamp": completed_at.isoformat(),
+                    "event": "upload_job_completed",
+                    "job_id": job_id,
+                    "status": job.status.value,
+                    "uploaded": uploaded_count,
+                    "skipped": skipped_count,
+                    "failed": failed_count,
+                    "total_bytes_uploaded": job.successfully_uploaded_bytes,
+                    "duration_seconds": job.total_upload_duration_seconds,
+                    "avg_speed_mbps": job.average_upload_speed_mbps,
+                    "files": file_summary,
+                },
+                completed_at,
+            )
         except Exception:
             logger.warning("Failed to save job JSONL summary", exc_info=True)
 
@@ -906,8 +1044,430 @@ class UploadManager:
         except Exception:
             logger.debug("Log sync to S3 failed", exc_info=True)
 
-        if progress_callback:
-            progress_callback(job)
+    def analyze_and_upload_pipeline(
+        self,
+        job_id: str,
+        aws_profile: str,
+        aws_region: str,
+        s3_bucket: str,
+        skip_duplicates: bool = True,
+        analysis_callback: Callable[["UploadJob", FileUploadState], None] | None = None,
+        upload_callback: Callable[["UploadJob"], None] | None = None,
+        use_cache: bool = True,
+        skip_validation: bool | None = None,
+    ) -> None:
+        """Analyze each file and upload it immediately — pipeline approach.
+
+        Instead of analyzing all files first and then uploading, this processes
+        files through a pipeline: MCAP parsing runs in a ProcessPoolExecutor,
+        and as each parse completes the file is immediately checked for duplicates
+        and submitted to a ThreadPoolExecutor for upload.
+
+        Args:
+            job_id: The job ID to process
+            aws_profile: AWS profile to use
+            aws_region: AWS region
+            s3_bucket: S3 bucket to upload to
+            skip_duplicates: Whether to skip files that already exist
+            analysis_callback: Called after each file is analyzed
+            upload_callback: Called for upload progress updates
+            use_cache: Whether to use cache for duplicate checking
+            skip_validation: If True, skip MCAP parsing. If None, use batch_config setting
+        """
+        # Determine skip_validation setting — read live from settings so that
+        # changes made in the Settings UI take effect without a server restart.
+        # (UploadManager is a singleton whose batch_config is frozen at init time.)
+        if skip_validation is None:
+            from app.config import get_settings
+
+            skip_validation = bool(
+                get_settings().batch_processing.get("skip_mcap_validation", False)
+            )
+        log = get_log_service()
+        job = self.get_job(job_id)
+        if not job:
+            return
+
+        job.status = UploadStatus.UPLOADING
+        job.started_at = datetime.now(UTC)
+
+        log.info(
+            "upload",
+            "pipeline_started",
+            f"Starting analyze-and-upload pipeline for {len(job.files)} files",
+            {"job_id": job_id, "total_files": len(job.files)},
+        )
+
+        # Create S3 client
+        try:
+            s3_client = s3_service.create_s3_client(aws_profile, aws_region)
+        except Exception as e:
+            job.status = UploadStatus.FAILED
+            for file_state in job.files:
+                file_state.status = UploadStatus.FAILED
+                file_state.error_message = f"Failed to create S3 client: {e}"
+                if analysis_callback:
+                    analysis_callback(job, file_state)
+            if upload_callback:
+                upload_callback(job)
+            return
+
+        cpu_workers = max(1, (os.cpu_count() or 4) - 1)
+        upload_executor = ThreadPoolExecutor(max_workers=self.max_workers)
+
+        # Mark all files as PENDING (waiting their turn in the analysis pool)
+        for fs in job.files:
+            fs.status = UploadStatus.PENDING
+
+        files_iter = iter(job.files)
+        active: dict[Any, FileUploadState] = {}
+
+        def _submit_next(proc_executor: ProcessPoolExecutor) -> None:
+            fs = next(files_iter, None)
+            if fs is None or job.cancelled:
+                return
+            fs.status = UploadStatus.ANALYZING
+            if analysis_callback:
+                analysis_callback(job, fs)  # "queued → analyzing" event
+            fut = proc_executor.submit(_extract_start_time_worker, fs.local_path, skip_validation)
+            active[fut] = fs
+
+        try:
+            with ProcessPoolExecutor(max_workers=cpu_workers) as proc_executor:
+                # Fill initial slots
+                for _ in range(cpu_workers):
+                    _submit_next(proc_executor)
+
+                while active:
+                    if job.cancelled:
+                        for f in list(active.keys()):
+                            f.cancel()
+                        break
+
+                    done, _ = wait(list(active.keys()), return_when=FIRST_COMPLETED)
+                    for future in done:
+                        fs = active.pop(future)
+                        result = future.result()
+
+                        if isinstance(result, str):
+                            # Parse failed
+                            fs.status = UploadStatus.FAILED
+                            fs.error_message = result
+                            log.error(
+                                "analysis",
+                                "file_analysis_failed",
+                                f"Failed to analyze {fs.filename}: {result}",
+                                {"job_id": job_id, "filename": fs.filename, "error": result},
+                            )
+                            if analysis_callback:
+                                analysis_callback(job, fs)
+                            _submit_next(proc_executor)
+                            continue
+
+                        # Parse succeeded — set timestamp and generate S3 path
+                        fs.start_time = result
+                        naive_start = mcap_service.to_naive_utc(result)
+                        fs.is_valid = naive_start >= EPOCH_CUTOFF.replace(tzinfo=None)
+                        fs.s3_path = mcap_service.generate_s3_path(result, fs.filename)
+
+                        # Check duplicate (I/O but fast — cache lookup or S3 HEAD)
+                        self._check_duplicate(fs, s3_client, s3_bucket, use_cache)
+                        fs.status = UploadStatus.READY
+
+                        log.info(
+                            "analysis",
+                            "file_analysis_completed",
+                            f"Analyzed {fs.filename}",
+                            {
+                                "job_id": job_id,
+                                "filename": fs.filename,
+                                "file_size": fs.file_size,
+                                "s3_path": fs.s3_path,
+                                "is_duplicate": fs.is_duplicate,
+                                "is_valid": fs.is_valid,
+                            },
+                        )
+
+                        # Notify frontend of analysis result
+                        if analysis_callback:
+                            analysis_callback(job, fs)
+
+                        # Fill freed slot immediately
+                        _submit_next(proc_executor)
+
+                        # Decide: skip or upload?
+                        if not fs.is_valid:
+                            fs.status = UploadStatus.SKIPPED
+                            fs.error_message = "Invalid timestamp (pre-1980)"
+                            log.warning(
+                                "upload",
+                                "file_upload_skipped",
+                                f"Skipped invalid timestamp: {fs.filename}",
+                                {
+                                    "job_id": job_id,
+                                    "filename": fs.filename,
+                                    "reason": "invalid_timestamp",
+                                },
+                            )
+                            if upload_callback:
+                                upload_callback(job)
+                            continue
+
+                        if skip_duplicates and fs.is_duplicate:
+                            fs.status = UploadStatus.SKIPPED
+                            fs.bytes_uploaded = fs.file_size
+                            log.info(
+                                "upload",
+                                "file_upload_skipped",
+                                f"Skipped duplicate: {fs.filename}",
+                                {
+                                    "job_id": job_id,
+                                    "filename": fs.filename,
+                                    "reason": "duplicate",
+                                },
+                            )
+                            if upload_callback:
+                                upload_callback(job)
+                            continue
+
+                        # Submit for upload immediately
+                        def make_upload_task(
+                            file_state: FileUploadState,
+                        ) -> Callable[[], Any]:
+                            def upload_task() -> Any:
+                                if job.cancelled:
+                                    with job.lock:
+                                        file_state.status = UploadStatus.CANCELLED
+                                    if analysis_callback:
+                                        analysis_callback(job, file_state)
+                                    if upload_callback:
+                                        upload_callback(job)
+                                    return None
+
+                                try:
+                                    with job.lock:
+                                        file_state.status = UploadStatus.UPLOADING
+                                        file_state.upload_started_at = datetime.now(UTC)
+                                    log.info(
+                                        "upload",
+                                        "file_upload_started",
+                                        f"Uploading {file_state.filename}",
+                                        {
+                                            "job_id": job_id,
+                                            "filename": file_state.filename,
+                                            "file_size": file_state.file_size,
+                                            "s3_path": file_state.s3_path,
+                                        },
+                                    )
+                                    if upload_callback:
+                                        upload_callback(job)
+
+                                    def byte_callback(uploaded: int, total: int) -> None:
+                                        with job.lock:
+                                            file_state.bytes_uploaded = uploaded
+                                        if upload_callback:
+                                            upload_callback(job)
+
+                                    upload_result = s3_service.upload_file_with_progress(
+                                        s3_client,
+                                        file_state.local_path,
+                                        s3_bucket,
+                                        file_state.s3_path,
+                                        byte_callback,
+                                        cancel_check=lambda: job.cancelled,
+                                    )
+
+                                    # Handle completion inline
+                                    file_state.upload_completed_at = datetime.now(UTC)
+                                    if upload_result["success"]:
+                                        file_state.status = UploadStatus.COMPLETED
+                                        file_state.bytes_uploaded = file_state.file_size
+                                        log.info(
+                                            "upload",
+                                            "file_upload_completed",
+                                            f"Uploaded {file_state.filename}",
+                                            {
+                                                "job_id": job_id,
+                                                "filename": file_state.filename,
+                                                "file_size": file_state.file_size,
+                                                "upload_duration_seconds": (
+                                                    file_state.upload_duration_seconds
+                                                ),
+                                                "s3_path": file_state.s3_path,
+                                            },
+                                        )
+                                        try:
+                                            cache = get_cache_service()
+                                            cache.update_cache(
+                                                s3_bucket,
+                                                file_state.s3_path,
+                                                exists=True,
+                                                filename=file_state.filename,
+                                                file_size=file_state.file_size,
+                                            )
+                                        except Exception:
+                                            logger.debug(
+                                                "Cache update failed after upload",
+                                                exc_info=True,
+                                            )
+                                    else:
+                                        file_state.status = UploadStatus.FAILED
+                                        file_state.error_message = upload_result.get(
+                                            "error", "Unknown error"
+                                        )
+                                        log.error(
+                                            "upload",
+                                            "file_upload_failed",
+                                            f"Failed to upload {file_state.filename}: "
+                                            f"{file_state.error_message}",
+                                            {
+                                                "job_id": job_id,
+                                                "filename": file_state.filename,
+                                                "error": file_state.error_message,
+                                            },
+                                        )
+                                except UploadCancelledError:
+                                    with job.lock:
+                                        file_state.status = UploadStatus.CANCELLED
+                                        file_state.upload_completed_at = datetime.now(UTC)
+                                except Exception as e:
+                                    file_state.upload_completed_at = datetime.now(UTC)
+                                    file_state.status = UploadStatus.FAILED
+                                    file_state.error_message = str(e)
+                                    log.error(
+                                        "upload",
+                                        "file_upload_failed",
+                                        f"Failed to upload {file_state.filename}: {e}",
+                                        {
+                                            "job_id": job_id,
+                                            "filename": file_state.filename,
+                                            "error": str(e),
+                                        },
+                                    )
+
+                                # Notify per-file status so the frontend
+                                # updates this row immediately (the progress
+                                # dict only includes active files, so without
+                                # this the row would keep spinning).
+                                if analysis_callback:
+                                    analysis_callback(job, file_state)
+                                if upload_callback:
+                                    upload_callback(job)
+                                return None
+
+                            return upload_task
+
+                        upload_executor.submit(make_upload_task(fs))
+
+        except Exception as e:
+            log.error(
+                "upload",
+                "pipeline_error",
+                f"Pipeline error: {e}",
+                {"job_id": job_id, "error": str(e)},
+            )
+        finally:
+            # Wait for ALL uploads (in-flight + queued) to complete
+            upload_executor.shutdown(wait=True)
+
+            # Mark any files still in non-terminal states as cancelled
+            if job.cancelled:
+                with job.lock:
+                    for fs in job.files:
+                        if fs.status in (
+                            UploadStatus.PENDING,
+                            UploadStatus.READY,
+                            UploadStatus.ANALYZING,
+                            UploadStatus.UPLOADING,
+                        ):
+                            fs.status = UploadStatus.CANCELLED
+
+        # Final job status
+        job.completed_at = datetime.now(UTC)
+        if job.cancelled:
+            job.status = UploadStatus.CANCELLED
+        elif all(f.status in (UploadStatus.COMPLETED, UploadStatus.SKIPPED) for f in job.files):
+            job.status = UploadStatus.COMPLETED
+        elif any(f.status == UploadStatus.COMPLETED for f in job.files):
+            job.status = UploadStatus.COMPLETED  # Partial success
+        else:
+            job.status = UploadStatus.FAILED
+
+        # Clean up temp directory
+        self.cleanup_temp_dir(job_id)
+
+        # Send terminal event IMMEDIATELY so the frontend unblocks.
+        # Heavy I/O (logging, CSV, S3 sync) follows below.
+        if upload_callback:
+            upload_callback(job)
+
+        uploaded_count = sum(1 for f in job.files if f.status == UploadStatus.COMPLETED)
+        skipped_count = sum(1 for f in job.files if f.status == UploadStatus.SKIPPED)
+        failed_count = sum(1 for f in job.files if f.status == UploadStatus.FAILED)
+
+        file_summary = [
+            {
+                "filename": f.filename,
+                "s3_path": f.s3_path,
+                "status": f.status.value,
+                "file_size": f.file_size,
+                "duration_seconds": f.upload_duration_seconds,
+            }
+            for f in job.files
+        ]
+
+        log.info(
+            "upload",
+            "upload_job_completed",
+            f"Upload job completed: {uploaded_count} uploaded, "
+            f"{skipped_count} skipped, {failed_count} failed",
+            {
+                "job_id": job_id,
+                "status": job.status.value,
+                "uploaded": uploaded_count,
+                "skipped": skipped_count,
+                "failed": failed_count,
+                "total_bytes_uploaded": job.successfully_uploaded_bytes,
+                "duration_seconds": job.total_upload_duration_seconds,
+                "avg_speed_mbps": job.average_upload_speed_mbps,
+                "files": file_summary,
+            },
+        )
+
+        # Save per-job JSONL summary
+        completed_at = job.completed_at or datetime.now(UTC)
+        try:
+            log.save_job_jsonl(
+                job_id,
+                {
+                    "timestamp": completed_at.isoformat(),
+                    "event": "upload_job_completed",
+                    "job_id": job_id,
+                    "status": job.status.value,
+                    "uploaded": uploaded_count,
+                    "skipped": skipped_count,
+                    "failed": failed_count,
+                    "total_bytes_uploaded": job.successfully_uploaded_bytes,
+                    "duration_seconds": job.total_upload_duration_seconds,
+                    "avg_speed_mbps": job.average_upload_speed_mbps,
+                    "files": file_summary,
+                },
+                completed_at,
+            )
+        except Exception:
+            logger.warning("Failed to save job JSONL summary", exc_info=True)
+
+        # Save upload summary CSV
+        try:
+            log.save_job_csv(job_id, job, completed_at)
+        except Exception:
+            logger.warning("Failed to save job CSV summary", exc_info=True)
+
+        # Auto-sync logs to S3
+        try:
+            log.sync_logs_to_s3(s3_client, s3_bucket)
+        except Exception:
+            logger.debug("Log sync to S3 failed", exc_info=True)
 
     def cancel_job(self, job_id: str) -> bool:
         """Cancel an upload job.
@@ -923,9 +1483,14 @@ class UploadManager:
             return False
 
         job.cancelled = True
-        for file_state in job.files:
-            if file_state.status in (UploadStatus.PENDING, UploadStatus.READY):
-                file_state.status = UploadStatus.CANCELLED
+        with job.lock:
+            for file_state in job.files:
+                if file_state.status in (
+                    UploadStatus.PENDING,
+                    UploadStatus.READY,
+                    UploadStatus.ANALYZING,
+                ):
+                    file_state.status = UploadStatus.CANCELLED
 
         # Clean up temp directory when job is cancelled
         self.cleanup_temp_dir(job_id)
@@ -969,6 +1534,7 @@ class UploadManager:
         s3_bucket: str,
         aws_profile: str = "default",
         aws_region: str = "us-west-2",
+        cache_only: bool = False,
     ) -> tuple[list[str], dict[str, Any]]:
         """Pre-filter files using cache and filename timestamp extraction.
 
@@ -1017,9 +1583,7 @@ class UploadManager:
             }
 
             # First: check cache by filename+size (works regardless of timestamp source)
-            filename_result = cache.check_exists_by_filename(
-                s3_bucket, path.name, stat.st_size
-            )
+            filename_result = cache.check_exists_by_filename(s3_bucket, path.name, stat.st_size)
             if filename_result is True:
                 stats["cache_hits"] += 1
                 stats["cache_skipped"] += 1
@@ -1062,36 +1626,305 @@ class UploadManager:
 
         # Batch S3 HEAD checks for cache misses
         if cache_miss_s3_paths:
-            try:
-                s3_client = s3_service.create_s3_client(aws_profile, aws_region)
-
-                def check_s3(s3_path: str) -> bool:
-                    return s3_service.check_file_exists(s3_client, s3_bucket, s3_path)
-
-                with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                    results = list(executor.map(check_s3, cache_miss_s3_paths))
-
-                for idx, s3_path, exists in zip(
-                    cache_miss_indices, cache_miss_s3_paths, results, strict=True
-                ):
-                    # Update cache with result
-                    fs = file_statuses[idx]
-                    cache.update_cache(
-                        s3_bucket, s3_path, exists, fs["filename"], fs["size"]
-                    )
-                    if exists:
-                        stats["s3_hits"] += 1
-                        fs["already_uploaded"] = True
-                    else:
-                        files_to_analyze.append(fs["path"])
-            except Exception:
-                # S3 check failed — fall back to full analysis for cache misses
+            if cache_only:
+                # In cache_only mode, skip S3 HEAD checks — treat misses as not-uploaded
                 for idx in cache_miss_indices:
                     files_to_analyze.append(file_statuses[idx]["path"])
+            else:
+                try:
+                    s3_client = s3_service.create_s3_client(aws_profile, aws_region)
+
+                    def check_s3(s3_path: str) -> bool:
+                        return s3_service.check_file_exists(s3_client, s3_bucket, s3_path)
+
+                    with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                        results = list(executor.map(check_s3, cache_miss_s3_paths))
+
+                    for idx, s3_path, exists in zip(
+                        cache_miss_indices, cache_miss_s3_paths, results, strict=True
+                    ):
+                        # Update cache with result
+                        fs = file_statuses[idx]
+                        cache.update_cache(s3_bucket, s3_path, exists, fs["filename"], fs["size"])
+                        if exists:
+                            stats["s3_hits"] += 1
+                            fs["already_uploaded"] = True
+                        else:
+                            files_to_analyze.append(fs["path"])
+                except Exception:
+                    # S3 check failed — fall back to full analysis for cache misses
+                    for idx in cache_miss_indices:
+                        files_to_analyze.append(file_statuses[idx]["path"])
 
         stats["to_analyze"] = len(files_to_analyze)
         stats["file_statuses"] = file_statuses
         return files_to_analyze, stats
+
+    def create_scan_job(
+        self,
+        folder_path: str,
+        excluded_subfolders: list[str] | None = None,
+        excluded_files: list[str] | None = None,
+    ) -> ScanJob:
+        """Create a new scan job for a folder.
+
+        Args:
+            folder_path: Root folder to scan
+            excluded_subfolders: Subfolder names to exclude from scan
+            excluded_files: Root-level filenames to exclude from scan
+
+        Returns:
+            The created ScanJob
+        """
+        job_id = str(uuid.uuid4())
+        scan_job = ScanJob(
+            job_id=job_id,
+            root_folder=folder_path,
+            excluded_subfolders=excluded_subfolders or [],
+            excluded_files=excluded_files or [],
+        )
+        with self._lock:
+            self.scan_jobs[job_id] = scan_job
+        return scan_job
+
+    def get_scan_job(self, job_id: str) -> ScanJob | None:
+        """Get a scan job by ID."""
+        return self.scan_jobs.get(job_id)
+
+    def cancel_scan_job(self, job_id: str) -> bool:
+        """Cancel a scan job.
+
+        Args:
+            job_id: The scan job ID to cancel
+
+        Returns:
+            True if job was found and cancelled
+        """
+        scan_job = self.get_scan_job(job_id)
+        if not scan_job:
+            return False
+        scan_job.cancelled = True
+        scan_job.status = "cancelled"
+        return True
+
+    def scan_folder_async(
+        self,
+        job_id: str,
+        s3_bucket: str,
+        aws_profile: str,
+        aws_region: str,
+        progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        cache_only: bool = False,
+    ) -> None:
+        """Scan a folder asynchronously, processing subfolder by subfolder.
+
+        Args:
+            job_id: The scan job ID
+            s3_bucket: S3 bucket for duplicate checking
+            aws_profile: AWS profile for S3 access
+            aws_region: AWS region for S3 access
+            progress_callback: Called with (job_id, event_data) for each event
+        """
+        scan_job = self.get_scan_job(job_id)
+        if not scan_job:
+            return
+
+        root = Path(scan_job.root_folder)
+        log = get_log_service()
+
+        try:
+            # Build exclusion sets for fast lookup
+            excluded_subs_set = set(scan_job.excluded_subfolders)
+            excluded_files_set = set(scan_job.excluded_files)
+
+            # Phase 1: Enumerate subfolders containing .mcap files (fast, metadata only)
+            folder_map: dict[str, list[Path]] = {}
+            for mcap_path in root.rglob("*.mcap"):
+                if scan_job.cancelled:
+                    break
+                if mcap_path.is_file():
+                    rel = mcap_path.relative_to(root)
+                    parts = rel.parts
+                    # Skip root-level files in excluded_files list
+                    if len(parts) == 1 and parts[0] in excluded_files_set:
+                        continue
+                    # Skip files under excluded subfolders
+                    if len(parts) > 1 and parts[0] in excluded_subs_set:
+                        continue
+                    parent = str(mcap_path.parent)
+                    if parent not in folder_map:
+                        folder_map[parent] = []
+                    folder_map[parent].append(mcap_path)
+
+            if scan_job.cancelled:
+                if progress_callback:
+                    progress_callback(
+                        job_id,
+                        {
+                            "type": "scan_complete",
+                            "status": "cancelled",
+                        },
+                    )
+                return
+
+            scan_job.folders_total = len(folder_map)
+
+            if progress_callback:
+                progress_callback(
+                    job_id,
+                    {
+                        "type": "scan_started",
+                        "folders_total": scan_job.folders_total,
+                        "root_folder": scan_job.root_folder,
+                    },
+                )
+
+            # Phase 2: Process each subfolder
+            for folder_path_str, mcap_paths in sorted(folder_map.items()):
+                if scan_job.cancelled:
+                    break
+
+                try:
+                    relative_path = str(Path(folder_path_str).relative_to(root))
+                    if relative_path == ".":
+                        relative_path = "."
+
+                    # Collect file info
+                    file_paths: list[str] = []
+                    files_info: list[dict[str, Any]] = []
+                    folder_size = 0
+                    for mcap_path in sorted(mcap_paths, key=lambda p: p.name):
+                        stat = mcap_path.stat()
+                        file_paths.append(str(mcap_path))
+                        folder_size += stat.st_size
+                        files_info.append(
+                            {
+                                "path": str(mcap_path),
+                                "filename": mcap_path.name,
+                                "size": stat.st_size,
+                                "mtime": stat.st_mtime,
+                                "relative_path": str(mcap_path.relative_to(root)),
+                            }
+                        )
+
+                    # Pre-filter this batch for duplicates
+                    _, pre_stats = self.pre_filter_files(
+                        file_paths,
+                        s3_bucket,
+                        aws_profile,
+                        aws_region,
+                        cache_only=cache_only,
+                    )
+
+                    # Merge pre-filter results into file info
+                    prefilter_map: dict[str, bool] = {}
+                    for fs in pre_stats.get("file_statuses", []):
+                        prefilter_map[fs["path"]] = fs.get("already_uploaded", False)
+
+                    already_uploaded_count = 0
+                    for fi in files_info:
+                        fi["already_uploaded"] = prefilter_map.get(fi["path"], False)
+                        if fi["already_uploaded"]:
+                            already_uploaded_count += 1
+
+                    all_uploaded = already_uploaded_count == len(files_info) and len(files_info) > 0
+
+                    scanned = ScannedFolder(
+                        folder_path=folder_path_str,
+                        relative_path=relative_path,
+                        files=files_info,
+                        total_files=len(files_info),
+                        already_uploaded=already_uploaded_count,
+                        all_uploaded=all_uploaded,
+                    )
+
+                except Exception as e:
+                    relative_path = str(Path(folder_path_str).relative_to(root))
+                    scanned = ScannedFolder(
+                        folder_path=folder_path_str,
+                        relative_path=relative_path,
+                        files=[],
+                        error=str(e),
+                    )
+                    log.error(
+                        "scan",
+                        "scan_folder_error",
+                        f"Error scanning {folder_path_str}: {e}",
+                        {"job_id": job_id, "folder": folder_path_str, "error": str(e)},
+                    )
+
+                # Build folder dict for both storage and SSE
+                folder_dict = {
+                    "relative_path": scanned.relative_path,
+                    "files": scanned.files,
+                    "total_files": scanned.total_files,
+                    "already_uploaded": scanned.already_uploaded,
+                    "all_uploaded": scanned.all_uploaded,
+                    "error": scanned.error,
+                }
+
+                # Update running totals and store results
+                with scan_job.lock:
+                    scan_job.folders_scanned += 1
+                    scan_job.total_files_found += scanned.total_files
+                    scan_job.total_already_uploaded += scanned.already_uploaded
+                    scan_job.total_size += sum(f.get("size", 0) for f in scanned.files)
+                    scan_job.scanned_folders.append(folder_dict)
+
+                if progress_callback:
+                    progress_callback(
+                        job_id,
+                        {
+                            "type": "scan_folder_complete",
+                            "folder": folder_dict,
+                            "folders_scanned": scan_job.folders_scanned,
+                            "folders_total": scan_job.folders_total,
+                            "running_totals": {
+                                "total_files_found": scan_job.total_files_found,
+                                "total_already_uploaded": scan_job.total_already_uploaded,
+                                "total_size": scan_job.total_size,
+                            },
+                        },
+                    )
+
+            # Terminal event
+            with scan_job.lock:
+                if scan_job.cancelled:
+                    scan_job.status = "cancelled"
+                else:
+                    scan_job.status = "completed"
+
+            if progress_callback:
+                progress_callback(
+                    job_id,
+                    {
+                        "type": "scan_complete",
+                        "status": scan_job.status,
+                        "folders_scanned": scan_job.folders_scanned,
+                        "folders_total": scan_job.folders_total,
+                        "total_files_found": scan_job.total_files_found,
+                        "total_already_uploaded": scan_job.total_already_uploaded,
+                        "total_size": scan_job.total_size,
+                    },
+                )
+
+        except Exception as e:
+            scan_job.status = "failed"
+            log.error(
+                "scan",
+                "scan_job_failed",
+                f"Scan job {job_id} failed: {e}",
+                {"job_id": job_id, "error": str(e)},
+            )
+            if progress_callback:
+                progress_callback(
+                    job_id,
+                    {
+                        "type": "scan_complete",
+                        "status": "failed",
+                        "error": str(e),
+                    },
+                )
 
     def get_active_jobs(self) -> list[UploadJob]:
         """Get all currently active (non-terminal) jobs."""
