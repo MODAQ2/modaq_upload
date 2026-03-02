@@ -9,6 +9,7 @@ repos:
       - id: check-merge-conflict
       - id: check-yaml
       - id: check-json
+        exclude: ^frontend/tsconfig\.
       - id: no-commit-to-branch
         args: [--branch, main]
 
