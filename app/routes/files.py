@@ -175,9 +175,9 @@ def browse_local() -> tuple[Response, int]:
             except OSError:
                 continue
 
-            uploaded = cache.check_exists_by_filename(
-                bucket, mcap_path.name, file_stat.st_size
-            ) is True
+            uploaded = (
+                cache.check_exists_by_filename(bucket, mcap_path.name, file_stat.st_size) is True
+            )
 
             if len(parts) == 1:
                 # Direct child MCAP file
@@ -276,9 +276,7 @@ def browse_local() -> tuple[Response, int]:
                 # If it's a user directory (e.g. /media/username), list its children
                 try:
                     children = [
-                        c
-                        for c in entry.iterdir()
-                        if c.is_dir() and not c.name.startswith(".")
+                        c for c in entry.iterdir() if c.is_dir() and not c.name.startswith(".")
                     ]
                 except PermissionError:
                     children = []
