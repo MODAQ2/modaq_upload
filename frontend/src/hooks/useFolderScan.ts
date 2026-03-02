@@ -12,6 +12,7 @@ import { useUploadStore } from "../stores/uploadStore.ts";
 import type {
   ScannedFolder,
   ScanEvent,
+  ScanStartedEvent,
   ScanFolderCompleteEvent,
   ScanCompleteEvent,
 } from "../types/api.ts";
@@ -32,6 +33,7 @@ interface UseFolderScanResult {
   startScan: (folderPath: string, cacheOnly?: boolean, exclusions?: ScanExclusions) => Promise<void>;
   cancelScan: () => Promise<void>;
   folders: ScannedFolder[];
+  foldersTotal: number;
   isScanning: boolean;
   scanComplete: boolean;
   totals: ScanTotals;
@@ -44,11 +46,13 @@ export function useFolderScan(): UseFolderScanResult {
     scanFolders: folders,
     isScanning,
     scanComplete,
+    scanFoldersTotal: foldersTotal,
     scanTotals: totals,
     setScanJobId,
     addScanFolder,
     setScanComplete,
     setIsScanning,
+    setScanFoldersTotal,
     updateScanTotals,
   } = useUploadStore();
 
@@ -59,9 +63,11 @@ export function useFolderScan(): UseFolderScanResult {
       if (!data || typeof data !== "object") return;
 
       switch (data.type) {
-        case "scan_started":
-          // Just update scanning state — we already set it in startScan.
+        case "scan_started": {
+          const evt = data as ScanStartedEvent;
+          setScanFoldersTotal(evt.folders_total);
           break;
+        }
 
         case "scan_folder_complete": {
           const evt = data as ScanFolderCompleteEvent;
@@ -88,7 +94,7 @@ export function useFolderScan(): UseFolderScanResult {
         }
       }
     },
-    [addScanFolder, updateScanTotals, setScanComplete, setIsScanning],
+    [addScanFolder, updateScanTotals, setScanComplete, setIsScanning, setScanFoldersTotal],
   );
 
   // Only connect when we have a jobId and are still scanning.
@@ -151,5 +157,5 @@ export function useFolderScan(): UseFolderScanResult {
     setJobId(null);
   }, [setIsScanning, setScanComplete]);
 
-  return { startScan, cancelScan, folders, isScanning, scanComplete, totals };
+  return { startScan, cancelScan, folders, foldersTotal, isScanning, scanComplete, totals };
 }
