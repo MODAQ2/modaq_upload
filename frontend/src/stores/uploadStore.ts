@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ScannedFolder, UploadJob } from "../types/api.ts";
+import type { BatchState, ScannedFolder, UploadJob } from "../types/api.ts";
 
 export type UploadStep = 1 | 2 | 3 | 4;
 
@@ -17,6 +17,7 @@ interface UploadState {
   scanFolders: ScannedFolder[];
   scanComplete: boolean;
   isScanning: boolean;
+  scanFoldersTotal: number;
   scanTotals: {
     totalFiles: number;
     alreadyUploaded: number;
@@ -26,6 +27,7 @@ interface UploadState {
   addScanFolder: (folder: ScannedFolder) => void;
   setScanComplete: (complete: boolean) => void;
   setIsScanning: (scanning: boolean) => void;
+  setScanFoldersTotal: (total: number) => void;
   updateScanTotals: (totals: { totalFiles: number; alreadyUploaded: number; totalSize: number }) => void;
 
   // Upload job
@@ -33,6 +35,16 @@ interface UploadState {
   completedJob: UploadJob | null;
   setUploadJobId: (id: string | null) => void;
   setCompletedJob: (job: UploadJob | null) => void;
+
+  // Batch processing state
+  currentBatch: number | null;
+  totalBatches: number | null;
+  batchState: BatchState | null;
+  isBatchProcessing: boolean;
+  setCurrentBatch: (batch: number | null) => void;
+  setTotalBatches: (batches: number | null) => void;
+  setBatchState: (state: BatchState | null) => void;
+  setIsBatchProcessing: (processing: boolean) => void;
 
   // Reset
   reset: () => void;
@@ -45,9 +57,14 @@ const initialState = {
   scanFolders: [],
   scanComplete: false,
   isScanning: false,
+  scanFoldersTotal: 0,
   scanTotals: { totalFiles: 0, alreadyUploaded: 0, totalSize: 0 },
   uploadJobId: null,
   completedJob: null,
+  currentBatch: null,
+  totalBatches: null,
+  batchState: null,
+  isBatchProcessing: false,
 };
 
 export const useUploadStore = create<UploadState>((set) => ({
@@ -61,10 +78,16 @@ export const useUploadStore = create<UploadState>((set) => ({
     set((s) => ({ scanFolders: [...s.scanFolders, folder] })),
   setScanComplete: (scanComplete) => set({ scanComplete }),
   setIsScanning: (isScanning) => set({ isScanning }),
+  setScanFoldersTotal: (scanFoldersTotal) => set({ scanFoldersTotal }),
   updateScanTotals: (scanTotals) => set({ scanTotals }),
 
   setUploadJobId: (uploadJobId) => set({ uploadJobId }),
   setCompletedJob: (completedJob) => set({ completedJob }),
+
+  setCurrentBatch: (currentBatch) => set({ currentBatch }),
+  setTotalBatches: (totalBatches) => set({ totalBatches }),
+  setBatchState: (batchState) => set({ batchState }),
+  setIsBatchProcessing: (isBatchProcessing) => set({ isBatchProcessing }),
 
   reset: () => set(initialState),
 }));
