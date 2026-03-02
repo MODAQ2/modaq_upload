@@ -380,7 +380,7 @@ function StatusBadge({
 
   const labels: Record<string, string> = {
     queued: "queued",
-    in_progress: `${Math.round(progressPercent)}%`,
+    in_progress: progressPercent > 0 ? `${Math.round(progressPercent)}%` : "analyzing",
     completed: "uploaded",
     skipped: "skipped",
     failed: "failed",
