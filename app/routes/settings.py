@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 import threading
+from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 
@@ -23,7 +24,7 @@ def get_all_settings() -> tuple[Response, int]:
         JSON response with all settings
     """
     settings = get_settings()
-    return jsonify(settings.all()), 200
+    return jsonify(settings.to_response()), 200
 
 
 @settings_bp.route("", methods=["PUT"])
@@ -45,12 +46,17 @@ def update_settings() -> tuple[Response, int]:
 
     settings = get_settings()
 
-    # Validate settings
-    allowed_keys = {
-        "aws_profile", "aws_region", "s3_bucket", "default_upload_folder", "display_name",
-        "log_directory",
-    }
-    filtered_data = {k: v for k, v in data.items() if k in allowed_keys}
+    # Accept any key present in the current settings schema; deep-merge nested dicts
+    # (e.g. batch_processing) so callers can send partial sub-objects.
+    current = settings.all()
+    filtered_data: dict[str, Any] = {}
+    for k, v in data.items():
+        if k not in current:
+            continue
+        if isinstance(current[k], dict) and isinstance(v, dict):
+            filtered_data[k] = {**current[k], **v}
+        else:
+            filtered_data[k] = v
 
     if not filtered_data:
         return jsonify({"error": "No valid settings provided"}), 400
@@ -65,7 +71,7 @@ def update_settings() -> tuple[Response, int]:
         {"changed_keys": list(filtered_data.keys())},
     )
 
-    return jsonify(settings.all()), 200
+    return jsonify(settings.to_response()), 200
 
 
 @settings_bp.route("/profiles", methods=["GET"])
