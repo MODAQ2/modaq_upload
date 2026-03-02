@@ -1367,8 +1367,8 @@ class UploadManager:
                 {"job_id": job_id, "error": str(e)},
             )
         finally:
-            # Wait for in-flight uploads; cancel_work_items prevents queued tasks from starting
-            upload_executor.shutdown(wait=True, cancel_futures=True)
+            # Wait for ALL uploads (in-flight + queued) to complete
+            upload_executor.shutdown(wait=True)
 
             # Mark any files still in non-terminal states as cancelled
             if job.cancelled:
