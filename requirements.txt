@@ -5,3 +5,4 @@ python-dotenv>=1.0.0
 gunicorn>=21.0.0
 modaq_toolkit[mcap] @ git+https://github.com/MODAQ2/MODAQ_toolkit.git
 mcap-ros2-support
+psutil>=5.9.0
