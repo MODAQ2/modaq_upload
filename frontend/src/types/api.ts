@@ -117,6 +117,90 @@ export interface AutoUploadStartingEvent {
   job_id: string;
 }
 
+// ── Batch processing types ──
+
+export interface BatchProcessingSettings {
+  enabled: boolean;
+  batch_size: number;
+  auto_tune_workers: boolean;
+  max_workers: number;
+  target_cpu_percent: number;
+  skip_mcap_validation: boolean;
+  use_database_for_large_jobs: boolean;
+  large_job_threshold: number;
+}
+
+export interface BatchState {
+  batch_id: number;
+  total_batches: number;
+  files_in_batch: number;
+  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
+  files_processed: number;
+  files_uploaded: number;
+  files_failed: number;
+  bytes_uploaded: number;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_seconds: number | null;
+  error_message: string;
+}
+
+export interface BatchStartedEvent {
+  type: "batch_started";
+  batch_id: number;
+  total_batches: number;
+  files_in_batch: number;
+}
+
+export interface BatchProgressEvent {
+  type: "batch_progress";
+  batch_id: number;
+  active_files: FileUploadState[]; // Max 8 items
+  batch_files_completed: number;
+  batch_files_total: number;
+  job_files_completed: number;
+  job_files_total: number;
+  job_progress_percent: number;
+}
+
+export interface BatchCompletedEvent {
+  type: "batch_completed";
+  batch_id: number;
+  files_uploaded: number;
+  files_failed: number;
+}
+
+export interface JobCompletedEvent {
+  type: "job_completed";
+  job_id: string;
+  status: "completed" | "failed" | "cancelled";
+  total_files: number;
+  files_uploaded: number;
+  files_failed: number;
+  duration_seconds: number;
+}
+
+export interface PaginatedResults {
+  job_id: string;
+  files: FileUploadState[];
+  pagination: {
+    page: number;
+    per_page: number;
+    total_files: number;
+    total_pages: number;
+    has_next: boolean;
+    has_prev: boolean;
+  };
+  job_metadata: {
+    job_id: string;
+    status: string;
+    total_files: number;
+    files_uploaded: number;
+    files_failed: number;
+    total_bytes: number;
+  };
+}
+
 // ── Scan types ──
 
 export interface ScannedFileInfo {
