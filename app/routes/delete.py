@@ -77,15 +77,17 @@ def scan_folder() -> tuple[Response, int]:
     total_size = sum(f.file_size for f in job.files)
     has_permission_issues = any(not f.writable for f in job.files)
 
-    return jsonify({
-        "success": True,
-        "job_id": job.job_id,
-        "folder_path": str(folder_path.absolute()),
-        "files": [f.to_dict() for f in job.files],
-        "total_files": len(job.files),
-        "total_size": total_size,
-        "permission_warning": has_permission_issues,
-    }), 200
+    return jsonify(
+        {
+            "success": True,
+            "job_id": job.job_id,
+            "folder_path": str(folder_path.absolute()),
+            "files": [f.to_dict() for f in job.files],
+            "total_files": len(job.files),
+            "total_size": total_size,
+            "permission_warning": has_permission_issues,
+        }
+    ), 200
 
 
 @delete_bp.route("/start/<job_id>", methods=["POST"])
@@ -110,9 +112,11 @@ def start_delete(job_id: str) -> tuple[Response, int]:
         if job.status in ("completed", "failed", "cancelled"):
             _send_sse_event(job.job_id, {"type": "delete_complete", **job.to_dict()})
         else:
-            _send_sse_event(
-                job.job_id, {"type": "delete_progress", **job.to_progress_dict()}
-            )
+            _send_sse_event(job.job_id, {"type": "delete_progress", **job.to_progress_dict()})
+
+    def batch_callback(batch_event: dict[str, Any]) -> None:
+        """Send batch-level events via SSE."""
+        _send_sse_event(job_id, batch_event)
 
     def run_delete() -> None:
         manager.start_delete_job(
@@ -120,6 +124,7 @@ def start_delete(job_id: str) -> tuple[Response, int]:
             settings.aws_profile,
             settings.aws_region,
             progress_callback=progress_callback,
+            batch_callback=batch_callback,
         )
 
     thread = threading.Thread(target=run_delete, daemon=True)
@@ -212,6 +217,64 @@ def get_status(job_id: str) -> tuple[Response, int]:
     return jsonify(job.to_dict()), 200
 
 
+@delete_bp.route("/results/<job_id>", methods=["GET"])
+def get_results(job_id: str) -> tuple[Response, int]:
+    """Get paginated results for a completed delete job.
+
+    For large jobs (>1000 files), results can be retrieved in pages
+    to prevent memory overload and large response payloads.
+
+    Args:
+        job_id: The delete job to get results for
+
+    Query parameters:
+        page: Page number (default: 1)
+        per_page: Results per page (default: 100, max: 500)
+
+    Returns:
+        JSON response with paginated file results and job metadata
+    """
+    manager = get_delete_manager()
+
+    # Get the job
+    job = manager.get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    # Parse pagination parameters
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("per_page", 100, type=int), 500)
+
+    # Calculate pagination
+    total_files = len(job.files)
+    total_pages = (total_files + per_page - 1) // per_page
+    offset = (page - 1) * per_page
+    paginated_files = job.files[offset : offset + per_page]
+
+    # Build response
+    return jsonify(
+        {
+            "job_id": job_id,
+            "files": [f.to_dict() for f in paginated_files],
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total_files": total_files,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_prev": page > 1,
+            },
+            "job_metadata": {
+                "job_id": job.job_id,
+                "status": job.status,
+                "total_files": total_files,
+                "status_counts": job.to_progress_dict().get("status_counts", {}),
+                "total_deleted_size": job.to_progress_dict().get("total_deleted_size", 0),
+            },
+        }
+    ), 200
+
+
 @delete_bp.route("/cancel/<job_id>", methods=["POST"])
 def cancel_delete(job_id: str) -> tuple[Response, int]:
     """Cancel a delete job.
@@ -226,11 +289,13 @@ def cancel_delete(job_id: str) -> tuple[Response, int]:
 
     if manager.cancel_job(job_id):
         job = manager.get_job(job_id)
-        return jsonify({
-            "success": True,
-            "job_id": job_id,
-            "job": job.to_dict() if job else None,
-        }), 200
+        return jsonify(
+            {
+                "success": True,
+                "job_id": job_id,
+                "job": job.to_dict() if job else None,
+            }
+        ), 200
 
     return jsonify({"error": "Job not found"}), 404
 
@@ -269,9 +334,7 @@ def fix_permissions() -> tuple[Response, int]:
     try:
         resolved = folder_path.resolve()
         if not str(resolved).startswith("/media/"):
-            return jsonify(
-                {"error": "Permission fix is only allowed for paths under /media/"}
-            ), 403
+            return jsonify({"error": "Permission fix is only allowed for paths under /media/"}), 403
     except (OSError, ValueError):
         return jsonify({"error": "Invalid path"}), 400
 
