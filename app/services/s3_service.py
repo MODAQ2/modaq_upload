@@ -14,6 +14,7 @@ from mypy_boto3_s3 import S3Client
 class UploadCancelledError(Exception):
     """Raised when an upload is cancelled mid-transfer."""
 
+
 # Multipart threshold: files below this size are uploaded as a single PUT request,
 # which produces a simple MD5 ETag. Files above use multipart upload, which produces
 # a composite ETag (md5_of_part_md5s-part_count) that can't be compared to a local MD5.
