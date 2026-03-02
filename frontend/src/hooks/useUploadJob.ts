@@ -15,7 +15,11 @@ import type {
   AnalysisCompleteEvent,
   AnalysisProgressEvent,
   AutoUploadStartingEvent,
+  BatchCompletedEvent,
+  BatchProgressEvent,
+  BatchStartedEvent,
   FileUploadState,
+  JobCompletedEvent,
   UploadJob,
   UploadJobProgress,
 } from "../types/api.ts";
@@ -56,6 +60,10 @@ type SSEEvent =
   | AnalysisProgressEvent
   | AnalysisCompleteEvent
   | AutoUploadStartingEvent
+  | BatchStartedEvent
+  | BatchProgressEvent
+  | BatchCompletedEvent
+  | JobCompletedEvent
   | UploadJobProgress
   | UploadJob;
 
@@ -86,7 +94,15 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
   const [totalBytesFormatted, setTotalBytesFormatted] = useState("");
   const [isCancelling, setIsCancelling] = useState(false);
 
-  const { setUploadJobId, setCompletedJob } = useUploadStore();
+  const {
+    setUploadJobId,
+    setCompletedJob,
+    setCurrentBatch,
+    setTotalBatches,
+    setBatchState,
+    setIsBatchProcessing,
+    batchState,
+  } = useUploadStore();
 
   // Callback refs — kept in sync with latest options via effect
   const onFileUpdateRef = useRef(options.onFileUpdate);
@@ -146,6 +162,84 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
             // Upload phase beginning — keep running, active files will
             // arrive via progress dicts.
             break;
+
+          case "batch_started": {
+            const evt = data as BatchStartedEvent;
+            setCurrentBatch(evt.batch_id);
+            setTotalBatches(evt.total_batches);
+            setIsBatchProcessing(true);
+            setBatchState({
+              batch_id: evt.batch_id,
+              total_batches: evt.total_batches,
+              files_in_batch: evt.files_in_batch,
+              status: "processing",
+              files_processed: 0,
+              files_uploaded: 0,
+              files_failed: 0,
+              bytes_uploaded: 0,
+              started_at: new Date().toISOString(),
+              completed_at: null,
+              duration_seconds: null,
+              error_message: "",
+            });
+            break;
+          }
+
+          case "batch_progress": {
+            const evt = data as BatchProgressEvent;
+            setCurrentBatch(evt.batch_id);
+            // Limit active files to 8 items max
+            setActiveFiles(evt.active_files.slice(0, 8));
+            setFilesProcessed(evt.job_files_completed);
+            setTotalFiles(evt.job_files_total);
+            setProgressPercent(evt.job_progress_percent);
+
+            // Update batch state with current progress
+            if (batchState) {
+              setBatchState({
+                ...batchState,
+                files_processed: evt.batch_files_completed,
+              });
+            }
+
+            // Notify unified table for each active file
+            if (onFileUpdateRef.current) {
+              for (const file of evt.active_files.slice(0, 8)) {
+                onFileUpdateRef.current(file);
+              }
+            }
+            break;
+          }
+
+          case "batch_completed": {
+            const evt = data as BatchCompletedEvent;
+            if (batchState) {
+              setBatchState({
+                ...batchState,
+                status: "completed",
+                files_uploaded: evt.files_uploaded,
+                files_failed: evt.files_failed,
+                completed_at: new Date().toISOString(),
+              });
+            }
+            break;
+          }
+
+          case "job_completed": {
+            // Job completed event - reset batch state
+            setIsRunning(false);
+            setIsCancelling(false);
+            setJobId(null);
+            setIsBatchProcessing(false);
+            setCurrentBatch(null);
+            setTotalBatches(null);
+            setBatchState(null);
+
+            // For large jobs, fetch paginated results instead of receiving all files
+            // The full file list would be too large for SSE
+            // Client should call /api/upload/results/<job_id> for pagination
+            break;
+          }
 
           default:
             break;
@@ -213,7 +307,14 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
         return;
       }
     },
-    [setCompletedJob],
+    [
+      setCompletedJob,
+      setCurrentBatch,
+      setTotalBatches,
+      setBatchState,
+      setIsBatchProcessing,
+      batchState,
+    ],
   );
 
   const sseUrl = useMemo(
