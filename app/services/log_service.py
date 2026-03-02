@@ -42,11 +42,7 @@ class LogService:
         """
         log_dir = self._get_log_dir()
         hive_dir = (
-            log_dir
-            / subdir
-            / f"year={dt.year:04d}"
-            / f"month={dt.month:02d}"
-            / f"day={dt.day:02d}"
+            log_dir / subdir / f"year={dt.year:04d}" / f"month={dt.month:02d}" / f"day={dt.day:02d}"
         )
         hive_dir.mkdir(parents=True, exist_ok=True)
         return hive_dir
@@ -211,22 +207,24 @@ class LogService:
                 if duration and duration > 0
                 else None
             )
-            writer.writerow([
-                job_id,
-                f.filename,
-                f.file_size,
-                format_file_size(f.file_size),
-                f.s3_path,
-                f.status.value,
-                f.start_time.isoformat() if f.start_time else "",
-                f.upload_started_at.isoformat() if f.upload_started_at else "",
-                f.upload_completed_at.isoformat() if f.upload_completed_at else "",
-                f.upload_duration_seconds,
-                speed,
-                f.is_duplicate,
-                f.is_valid,
-                f.error_message,
-            ])
+            writer.writerow(
+                [
+                    job_id,
+                    f.filename,
+                    f.file_size,
+                    format_file_size(f.file_size),
+                    f.s3_path,
+                    f.status.value,
+                    f.start_time.isoformat() if f.start_time else "",
+                    f.upload_started_at.isoformat() if f.upload_started_at else "",
+                    f.upload_completed_at.isoformat() if f.upload_completed_at else "",
+                    f.upload_duration_seconds,
+                    speed,
+                    f.is_duplicate,
+                    f.is_valid,
+                    f.error_message,
+                ]
+            )
 
         with self._write_lock:
             with open(out_path, "w", encoding="utf-8", newline="") as fh:
@@ -251,28 +249,32 @@ class LogService:
             for f in sorted(json_dir.rglob("*.jsonl"), reverse=True):
                 date_str = self._extract_date_from_hive_path(f)
                 rel_path = f.relative_to(log_dir)
-                result.append({
-                    "date": date_str,
-                    "filename": f.name,
-                    "path": str(f),
-                    "relative_path": str(rel_path),
-                    "size_bytes": f.stat().st_size,
-                    "type": "jsonl",
-                })
+                result.append(
+                    {
+                        "date": date_str,
+                        "filename": f.name,
+                        "path": str(f),
+                        "relative_path": str(rel_path),
+                        "size_bytes": f.stat().st_size,
+                        "type": "jsonl",
+                    }
+                )
 
         # Collect CSV files under csv/
         if csv_dir.exists():
             for f in sorted(csv_dir.rglob("*.csv"), reverse=True):
                 date_str = self._extract_date_from_hive_path(f)
                 rel_path = f.relative_to(log_dir)
-                result.append({
-                    "date": date_str,
-                    "filename": f.name,
-                    "path": str(f),
-                    "relative_path": str(rel_path),
-                    "size_bytes": f.stat().st_size,
-                    "type": "csv",
-                })
+                result.append(
+                    {
+                        "date": date_str,
+                        "filename": f.name,
+                        "path": str(f),
+                        "relative_path": str(rel_path),
+                        "size_bytes": f.stat().st_size,
+                        "type": "csv",
+                    }
+                )
 
         return result
 
@@ -423,12 +425,14 @@ class LogService:
             for csv_file in sorted(csv_dir.rglob("*.csv"), reverse=True):
                 date_str = self._extract_date_from_hive_path(csv_file) or ""
                 rel_path = str(csv_file.relative_to(log_dir))
-                csv_files.append({
-                    "path": rel_path,
-                    "filename": csv_file.name,
-                    "date": date_str,
-                    "size": csv_file.stat().st_size,
-                })
+                csv_files.append(
+                    {
+                        "path": rel_path,
+                        "filename": csv_file.name,
+                        "date": date_str,
+                        "size": csv_file.stat().st_size,
+                    }
+                )
 
         return {
             "total_entries": total_entries,
@@ -511,14 +515,16 @@ class LogService:
 
                         session_duration += duration
 
-                        session_files.append({
-                            "filename": row.get("filename", ""),
-                            "file_size_formatted": row.get("file_size_formatted", ""),
-                            "status": status,
-                            "upload_speed_mbps": speed,
-                            "s3_path": row.get("s3_path", ""),
-                            "error_message": row.get("error_message", ""),
-                        })
+                        session_files.append(
+                            {
+                                "filename": row.get("filename", ""),
+                                "file_size_formatted": row.get("file_size_formatted", ""),
+                                "status": status,
+                                "upload_speed_mbps": speed,
+                                "s3_path": row.get("s3_path", ""),
+                                "error_message": row.get("error_message", ""),
+                            }
+                        )
             except (OSError, csv.Error):
                 continue
 
@@ -531,20 +537,22 @@ class LogService:
             if session_duration > 0 and session_bytes > 0:
                 avg_speed = round(session_bytes / session_duration / 1024 / 1024 * 8, 1)
 
-            sessions.append({
-                "csv_path": rel_path,
-                "date": date_str,
-                "time": time_str,
-                "total_files": len(session_files),
-                "completed": session_completed,
-                "failed": session_failed,
-                "skipped": session_skipped,
-                "total_bytes": session_bytes,
-                "total_bytes_formatted": format_file_size(session_bytes),
-                "total_duration_seconds": round(session_duration, 1),
-                "avg_speed_mbps": avg_speed,
-                "files": session_files,
-            })
+            sessions.append(
+                {
+                    "csv_path": rel_path,
+                    "date": date_str,
+                    "time": time_str,
+                    "total_files": len(session_files),
+                    "completed": session_completed,
+                    "failed": session_failed,
+                    "skipped": session_skipped,
+                    "total_bytes": session_bytes,
+                    "total_bytes_formatted": format_file_size(session_bytes),
+                    "total_duration_seconds": round(session_duration, 1),
+                    "avg_speed_mbps": avg_speed,
+                    "files": session_files,
+                }
+            )
 
         return {
             "total_files_uploaded": total_uploaded,
