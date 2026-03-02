@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import CacheSection from "../components/settings/CacheSection.tsx";
 import DangerZone from "../components/settings/DangerZone.tsx";
+import PerformanceSection from "../components/settings/PerformanceSection.tsx";
 import SettingsForm from "../components/settings/SettingsForm.tsx";
 import UpdateSection from "../components/settings/UpdateSection.tsx";
 import { useAppStore } from "../stores/appStore.ts";
@@ -24,6 +25,7 @@ export default function SettingsPage() {
     <div className="max-w-3xl mx-auto space-y-6">
       <h2 className="text-xl font-semibold text-nlr-text">Settings</h2>
       <SettingsForm />
+      <PerformanceSection />
       <UpdateSection />
       <CacheSection />
       <DangerZone />
