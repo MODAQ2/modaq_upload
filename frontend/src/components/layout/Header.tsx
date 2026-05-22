@@ -9,7 +9,7 @@ export default function Header() {
         <h1 className="nlr-header-title">{displayName}</h1>
         <a href="https://www.nlr.gov" target="_blank" rel="noopener noreferrer">
           <img
-            src="/images/nlr-logo@2x-01.png"
+            src="/images/nlr-logo-horizontal.svg"
             alt="National Laboratory of the Rockies"
             className="nlr-logo-image"
           />
