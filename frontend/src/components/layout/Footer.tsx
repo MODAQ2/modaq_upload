@@ -36,21 +36,13 @@ export default function Footer() {
                   className="h-12"
                 />
               </a>
-              <a
-                href="https://www.energy.gov"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <img
-                  src="/images/doe-logo.svg"
-                  alt="U.S. Department of Energy"
-                  className="h-10"
-                />
+              <a href="https://www.energy.gov" target="_blank" rel="noopener noreferrer">
+                <img src="/images/doe-logo.svg" alt="U.S. Department of Energy" className="h-10" />
               </a>
             </div>
             <p className="nlr-attr text-center md:text-right max-w-md flex-grow">
-              The National Laboratory of the Rockies is a national laboratory of the
-              U.S. Department of Energy, Office of Critical Minerals and Energy Innovation.
+              The National Laboratory of the Rockies is a national laboratory of the U.S. Department
+              of Energy, Office of Critical Minerals and Energy Innovation.
             </p>
           </div>
         </div>
