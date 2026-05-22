@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { UploadSession, UploadSessionFile } from "../../types/api.ts";
+import { useState } from 'react';
+import type { UploadSession, UploadSessionFile } from '../../types/api.ts';
 
 interface UploadSessionListProps {
   sessions: UploadSession[];
@@ -7,12 +7,14 @@ interface UploadSessionListProps {
 
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    completed: "bg-green-100 text-green-700",
-    skipped: "bg-gray-100 text-gray-600",
-    failed: "bg-red-100 text-red-700",
+    completed: 'bg-green-100 text-green-700',
+    skipped: 'bg-gray-100 text-gray-600',
+    failed: 'bg-red-100 text-red-700',
   };
   return (
-    <span className={`inline-block px-2 py-0.5 text-xs font-medium rounded ${colors[status] ?? "bg-gray-100 text-gray-600"}`}>
+    <span
+      className={`inline-block px-2 py-0.5 text-xs font-medium rounded ${colors[status] ?? 'bg-gray-100 text-gray-600'}`}
+    >
       {status}
     </span>
   );
@@ -20,9 +22,11 @@ function StatusBadge({ status }: { status: string }) {
 
 function SessionStatusSummary({ session }: { session: UploadSession }) {
   const parts: { text: string; color: string }[] = [];
-  if (session.completed > 0) parts.push({ text: `${session.completed} completed`, color: "text-green-600" });
-  if (session.failed > 0) parts.push({ text: `${session.failed} failed`, color: "text-red-600" });
-  if (session.skipped > 0) parts.push({ text: `${session.skipped} skipped`, color: "text-gray-500" });
+  if (session.completed > 0)
+    parts.push({ text: `${session.completed} completed`, color: 'text-green-600' });
+  if (session.failed > 0) parts.push({ text: `${session.failed} failed`, color: 'text-red-600' });
+  if (session.skipped > 0)
+    parts.push({ text: `${session.skipped} skipped`, color: 'text-gray-500' });
 
   return (
     <span className="text-sm">
@@ -60,19 +64,26 @@ function FileDetailTable({ files }: { files: UploadSessionFile[] }) {
           {files.map((file) => (
             <tr key={file.filename} className="hover:bg-gray-50">
               <td className="px-3 py-2 text-gray-900 font-mono">{file.filename}</td>
-              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{file.file_size_formatted}</td>
-              <td className="px-3 py-2"><StatusBadge status={file.status} /></td>
               <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
-                {file.upload_speed_mbps ? `${file.upload_speed_mbps} Mbps` : "-"}
+                {file.file_size_formatted}
               </td>
-              <td className="px-3 py-2 text-gray-500 font-mono text-[11px] max-w-xs truncate" title={file.s3_path}>
-                {file.s3_path || "-"}
+              <td className="px-3 py-2">
+                <StatusBadge status={file.status} />
+              </td>
+              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+                {file.upload_speed_mbps ? `${file.upload_speed_mbps} Mbps` : '-'}
+              </td>
+              <td
+                className="px-3 py-2 text-gray-500 font-mono text-[11px] max-w-xs truncate"
+                title={file.s3_path}
+              >
+                {file.s3_path || '-'}
               </td>
             </tr>
           ))}
           {/* Show error rows separately for failed files */}
           {files
-            .filter((f) => f.status === "failed" && f.error_message)
+            .filter((f) => f.status === 'failed' && f.error_message)
             .map((f) => (
               <tr key={`${f.filename}-error`} className="bg-red-50">
                 <td colSpan={5} className="px-3 py-1.5 text-xs text-red-600">
@@ -108,17 +119,24 @@ export default function UploadSessionList({ sessions }: UploadSessionListProps) 
           >
             {/* Session header row */}
             <button
+              type="button"
               onClick={() => setExpandedIndex(isExpanded ? null : i)}
               className="w-full flex items-center gap-4 px-4 py-3 hover:bg-gray-50 transition-colors text-left"
             >
               {/* Chevron */}
               <svg
-                className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                aria-hidden="true"
+                className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5l7 7-7 7"
+                />
               </svg>
 
               {/* Date + time */}
@@ -147,10 +165,10 @@ export default function UploadSessionList({ sessions }: UploadSessionListProps) 
                 <div className="text-xs text-gray-500">
                   {session.total_duration_seconds > 0
                     ? formatDuration(session.total_duration_seconds)
-                    : "-"}
+                    : '-'}
                 </div>
                 <div className="text-xs text-gray-400">
-                  {session.avg_speed_mbps > 0 ? `${session.avg_speed_mbps} Mbps` : ""}
+                  {session.avg_speed_mbps > 0 ? `${session.avg_speed_mbps} Mbps` : ''}
                 </div>
               </div>
 
