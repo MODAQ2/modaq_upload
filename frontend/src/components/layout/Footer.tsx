@@ -26,14 +26,14 @@ export default function Footer() {
           <div className="flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center gap-6 mb-4 md:mb-0">
               <a
-                href="https://www.allianceforsustainableenergy.org/"
+                href="https://www.alliance-for-energy-innovation.org/"
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 <img
-                  src="/images/alliance-logo_black.svg"
-                  alt="Alliance for Energy Innovation"
-                  className="h-8"
+                  src="/images/alliance-for-energy-innovation-fy26-logo-black.svg"
+                  alt="Alliance for Energy Innovation, LLC"
+                  className="h-12"
                 />
               </a>
               <a
