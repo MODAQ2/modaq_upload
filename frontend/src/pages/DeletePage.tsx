@@ -8,51 +8,51 @@
  * Step 5: Summary with results
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import ProgressBar from "../components/common/ProgressBar.tsx";
-import Spinner from "../components/common/Spinner.tsx";
-import StatCard from "../components/common/StatCard.tsx";
-import DeleteConfirmation from "../components/delete/DeleteConfirmation.tsx";
-import DeleteStepper from "../components/delete/DeleteStepper.tsx";
-import FixPermissionsModal from "../components/delete/FixPermissionsModal.tsx";
-import CancelConfirmModal from "../components/upload/CancelConfirmModal.tsx";
-import FolderBrowser from "../components/upload/FolderBrowser.tsx";
-import type { FolderExclusions } from "../components/upload/FolderBrowser.tsx";
-import { useDeleteJob } from "../hooks/useDeleteJob.ts";
-import { useDeleteScan } from "../hooks/useDeleteScan.ts";
-import { useAppStore } from "../stores/appStore.ts";
-import { useDeleteStore, type DeleteStep } from "../stores/deleteStore.ts";
-import type { DeleteScanFile } from "../types/delete.ts";
-import { LockIcon, WarningIcon } from "../utils/icons.tsx";
-import { formatBytes } from "../utils/format/bytes.ts";
+import ProgressBar from '../components/common/ProgressBar.tsx';
+import Spinner from '../components/common/Spinner.tsx';
+import StatCard from '../components/common/StatCard.tsx';
+import DeleteConfirmation from '../components/delete/DeleteConfirmation.tsx';
+import DeleteStepper from '../components/delete/DeleteStepper.tsx';
+import FixPermissionsModal from '../components/delete/FixPermissionsModal.tsx';
+import CancelConfirmModal from '../components/upload/CancelConfirmModal.tsx';
+import type { FolderExclusions } from '../components/upload/FolderBrowser.tsx';
+import FolderBrowser from '../components/upload/FolderBrowser.tsx';
+import { useDeleteJob } from '../hooks/useDeleteJob.ts';
+import { useDeleteScan } from '../hooks/useDeleteScan.ts';
+import { useAppStore } from '../stores/appStore.ts';
+import { type DeleteStep, useDeleteStore } from '../stores/deleteStore.ts';
+import type { DeleteScanFile } from '../types/delete.ts';
+import { formatBytes } from '../utils/format/bytes.ts';
+import { LockIcon, WarningIcon } from '../utils/icons.tsx';
 
 /** Status badge colors for file table. */
 function statusBadge(status: string) {
   switch (status) {
-    case "deleted":
-      return "bg-green-100 text-green-700";
-    case "verified":
-      return "bg-blue-100 text-blue-700";
-    case "verifying":
-    case "deleting":
-      return "bg-yellow-100 text-yellow-700";
-    case "mismatch":
-      return "bg-orange-100 text-orange-700";
-    case "failed":
-      return "bg-red-100 text-red-700";
-    case "cancelled":
-      return "bg-gray-100 text-gray-600";
+    case 'deleted':
+      return 'bg-green-100 text-green-700';
+    case 'verified':
+      return 'bg-blue-100 text-blue-700';
+    case 'verifying':
+    case 'deleting':
+      return 'bg-yellow-100 text-yellow-700';
+    case 'mismatch':
+      return 'bg-orange-100 text-orange-700';
+    case 'failed':
+      return 'bg-red-100 text-red-700';
+    case 'cancelled':
+      return 'bg-gray-100 text-gray-600';
     default:
-      return "bg-gray-100 text-gray-600";
+      return 'bg-gray-100 text-gray-600';
   }
 }
 
 /** Truncate path for display, showing last N segments. */
 function truncatePath(path: string, segments = 3): string {
-  const parts = path.split("/");
+  const parts = path.split('/');
   if (parts.length <= segments) return path;
-  return `.../${parts.slice(-segments).join("/")}`;
+  return `.../${parts.slice(-segments).join('/')}`;
 }
 
 export default function DeletePage() {
@@ -69,9 +69,7 @@ export default function DeletePage() {
     reset,
   } = useDeleteStore();
 
-  const defaultUploadFolder = useAppStore(
-    (s) => s.settings?.default_upload_folder,
-  );
+  const defaultUploadFolder = useAppStore((s) => s.settings?.default_upload_folder);
 
   const { scan, isScanning } = useDeleteScan();
   const deleteJob = useDeleteJob();
@@ -154,9 +152,7 @@ export default function DeletePage() {
 
   const progressPercent = useMemo(() => {
     if (deleteJob.totalFiles === 0) return 0;
-    return Math.round(
-      (deleteJob.filesProcessed / deleteJob.totalFiles) * 100,
-    );
+    return Math.round((deleteJob.filesProcessed / deleteJob.totalFiles) * 100);
   }, [deleteJob.filesProcessed, deleteJob.totalFiles]);
 
   const completionFiles: DeleteScanFile[] = completedJob?.files ?? [];
@@ -173,11 +169,7 @@ export default function DeletePage() {
 
   return (
     <div>
-      <DeleteStepper
-        currentStep={step}
-        onStepClick={handleStepClick}
-        isDeleting={isDeleting}
-      />
+      <DeleteStepper currentStep={step} onStepClick={handleStepClick} isDeleting={isDeleting} />
 
       {/* Step 1: Folder Selection */}
       {step === 1 && (
@@ -193,20 +185,12 @@ export default function DeletePage() {
       {step === 2 && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-4">
+            <StatCard value={scanResults.length} label="Files Matched" color="text-nlr-blue" />
+            <StatCard value={formatBytes(scanTotalSize)} label="Total Size" color="text-nlr-blue" />
             <StatCard
-              value={scanResults.length}
-              label="Files Matched"
-              color="text-nlr-blue"
-            />
-            <StatCard
-              value={formatBytes(scanTotalSize)}
-              label="Total Size"
-              color="text-nlr-blue"
-            />
-            <StatCard
-              value={isScanning ? "Scanning..." : "Ready"}
+              value={isScanning ? 'Scanning...' : 'Ready'}
               label="Status"
-              color={isScanning ? "text-amber-600" : "text-green-600"}
+              color={isScanning ? 'text-amber-600' : 'text-green-600'}
             />
           </div>
 
@@ -214,12 +198,10 @@ export default function DeletePage() {
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
               <LockIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
               <div className="flex-1">
-                <p className="text-sm font-medium text-amber-800">
-                  Permission issues detected
-                </p>
+                <p className="text-sm font-medium text-amber-800">Permission issues detected</p>
                 <p className="text-sm text-amber-700 mt-1">
-                  Some files on this drive are owned by a different user and
-                  cannot be deleted without fixing permissions first.
+                  Some files on this drive are owned by a different user and cannot be deleted
+                  without fixing permissions first.
                 </p>
                 <button
                   type="button"
@@ -235,8 +217,8 @@ export default function DeletePage() {
 
           {scanResults.length === 0 && !isScanning && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-              No uploaded MCAP files found in this folder. Only files previously
-              uploaded through this application can be cleared.
+              No uploaded Data Files found in this folder. Only files previously uploaded through
+              this application can be cleared.
             </div>
           )}
 
@@ -246,30 +228,17 @@ export default function DeletePage() {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
-                      <th className="text-left px-4 py-2 font-medium text-gray-600">
-                        Filename
-                      </th>
-                      <th className="text-left px-4 py-2 font-medium text-gray-600">
-                        Size
-                      </th>
-                      <th className="text-left px-4 py-2 font-medium text-gray-600">
-                        Cloud Path
-                      </th>
+                      <th className="text-left px-4 py-2 font-medium text-gray-600">Filename</th>
+                      <th className="text-left px-4 py-2 font-medium text-gray-600">Size</th>
+                      <th className="text-left px-4 py-2 font-medium text-gray-600">Cloud Path</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {paginatedReviewFiles.map((f) => (
                       <tr key={f.local_path} className="hover:bg-gray-50">
-                        <td className="px-4 py-2 font-mono text-xs">
-                          {f.filename}
-                        </td>
-                        <td className="px-4 py-2 text-gray-600">
-                          {formatBytes(f.file_size)}
-                        </td>
-                        <td
-                          className="px-4 py-2 text-gray-500 text-xs"
-                          title={f.s3_path}
-                        >
+                        <td className="px-4 py-2 font-mono text-xs">{f.filename}</td>
+                        <td className="px-4 py-2 text-gray-600">{formatBytes(f.file_size)}</td>
+                        <td className="px-4 py-2 text-gray-500 text-xs" title={f.s3_path}>
                           {truncatePath(f.s3_path)}
                         </td>
                       </tr>
@@ -283,8 +252,7 @@ export default function DeletePage() {
                 <div className="flex items-center justify-between text-sm text-gray-600">
                   <span>
                     Showing {page * pageSize + 1}–
-                    {Math.min((page + 1) * pageSize, scanResults.length)} of{" "}
-                    {scanResults.length}
+                    {Math.min((page + 1) * pageSize, scanResults.length)} of {scanResults.length}
                   </span>
                   <div className="flex gap-2">
                     <button
@@ -297,9 +265,7 @@ export default function DeletePage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() =>
-                        setPage((p) => Math.min(totalPages - 1, p + 1))
-                      }
+                      onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                       disabled={page >= totalPages - 1}
                       className="px-3 py-1 border rounded disabled:opacity-50"
                     >
@@ -374,11 +340,11 @@ export default function DeletePage() {
           <ProgressBar
             percent={progressPercent}
             label={
-              deleteJob.jobStatus === "verifying"
-                ? "Verifying files against cloud storage..."
-                : deleteJob.jobStatus === "deleting"
-                  ? "Clearing verified files..."
-                  : "Processing..."
+              deleteJob.jobStatus === 'verifying'
+                ? 'Verifying files against cloud storage...'
+                : deleteJob.jobStatus === 'deleting'
+                  ? 'Clearing verified files...'
+                  : 'Processing...'
             }
           />
 
@@ -407,7 +373,9 @@ export default function DeletePage() {
               <div className="bg-white rounded-lg shadow-xl px-8 py-6 flex flex-col items-center gap-3">
                 <Spinner />
                 <p className="text-sm font-medium text-gray-700">Cancelling...</p>
-                <p className="text-xs text-gray-500">Waiting for in-progress operations to finish.</p>
+                <p className="text-xs text-gray-500">
+                  Waiting for in-progress operations to finish.
+                </p>
               </div>
             </div>
           )}
@@ -446,29 +414,17 @@ export default function DeletePage() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <th className="text-left px-4 py-2 font-medium text-gray-600">
-                      Filename
-                    </th>
-                    <th className="text-left px-4 py-2 font-medium text-gray-600">
-                      Size
-                    </th>
-                    <th className="text-left px-4 py-2 font-medium text-gray-600">
-                      Status
-                    </th>
-                    <th className="text-left px-4 py-2 font-medium text-gray-600">
-                      Details
-                    </th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-600">Filename</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-600">Size</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-600">Status</th>
+                    <th className="text-left px-4 py-2 font-medium text-gray-600">Details</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {completionFiles.map((f) => (
                     <tr key={f.local_path} className="hover:bg-gray-50">
-                      <td className="px-4 py-2 font-mono text-xs">
-                        {f.filename}
-                      </td>
-                      <td className="px-4 py-2 text-gray-600">
-                        {formatBytes(f.file_size)}
-                      </td>
+                      <td className="px-4 py-2 font-mono text-xs">{f.filename}</td>
+                      <td className="px-4 py-2 text-gray-600">{formatBytes(f.file_size)}</td>
                       <td className="px-4 py-2">
                         <span
                           className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(f.status)}`}
@@ -477,7 +433,12 @@ export default function DeletePage() {
                         </span>
                       </td>
                       <td className="px-4 py-2 text-xs text-gray-500">
-                        {f.error_message || (f.verification === "md5+size" ? "Verified: MD5 + size" : f.verification === "size" ? "Verified: size (multipart ETag)" : "—")}
+                        {f.error_message ||
+                          (f.verification === 'md5+size'
+                            ? 'Verified: MD5 + size'
+                            : f.verification === 'size'
+                              ? 'Verified: size (multipart ETag)'
+                              : '—')}
                       </td>
                     </tr>
                   ))}

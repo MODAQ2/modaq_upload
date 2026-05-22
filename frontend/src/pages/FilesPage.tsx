@@ -1,6 +1,6 @@
-import { useEffect } from "react";
-import S3Browser from "../components/files/S3Browser.tsx";
-import { useAppStore } from "../stores/appStore.ts";
+import { useEffect } from 'react';
+import S3Browser from '../components/files/S3Browser.tsx';
+import { useAppStore } from '../stores/appStore.ts';
 
 export default function FilesPage() {
   const settings = useAppStore((s) => s.settings);
@@ -13,9 +13,7 @@ export default function FilesPage() {
   }, [settings, loadSettings]);
 
   if (!settings) {
-    return (
-      <div className="text-center py-12 text-gray-500">Loading settings...</div>
-    );
+    return <div className="text-center py-12 text-gray-500">Loading settings...</div>;
   }
 
   if (!settings.s3_bucket) {
