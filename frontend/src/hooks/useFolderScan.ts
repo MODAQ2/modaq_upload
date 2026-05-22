@@ -5,18 +5,18 @@
  * Updates uploadStore with scan results as they arrive.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from 'react';
 
-import { apiPost } from "../api/client.ts";
-import { useUploadStore } from "../stores/uploadStore.ts";
+import { apiPost } from '../api/client.ts';
+import { useUploadStore } from '../stores/uploadStore.ts';
 import type {
-  ScannedFolder,
-  ScanEvent,
-  ScanStartedEvent,
-  ScanFolderCompleteEvent,
   ScanCompleteEvent,
-} from "../types/api.ts";
-import { useSSE } from "./useSSE.ts";
+  ScanEvent,
+  ScanFolderCompleteEvent,
+  ScannedFolder,
+  ScanStartedEvent,
+} from '../types/api.ts';
+import { useSSE } from './useSSE.ts';
 
 interface ScanTotals {
   totalFiles: number;
@@ -30,7 +30,11 @@ interface ScanExclusions {
 }
 
 interface UseFolderScanResult {
-  startScan: (folderPath: string, cacheOnly?: boolean, exclusions?: ScanExclusions) => Promise<void>;
+  startScan: (
+    folderPath: string,
+    cacheOnly?: boolean,
+    exclusions?: ScanExclusions,
+  ) => Promise<void>;
   cancelScan: () => Promise<void>;
   folders: ScannedFolder[];
   foldersTotal: number;
@@ -50,6 +54,7 @@ export function useFolderScan(): UseFolderScanResult {
     scanTotals: totals,
     setScanJobId,
     addScanFolder,
+    clearScanFolders,
     setScanComplete,
     setIsScanning,
     setScanFoldersTotal,
@@ -60,16 +65,16 @@ export function useFolderScan(): UseFolderScanResult {
   const handleMessage = useCallback(
     (raw: unknown) => {
       const data = raw as ScanEvent & Record<string, unknown>;
-      if (!data || typeof data !== "object") return;
+      if (!data || typeof data !== 'object') return;
 
       switch (data.type) {
-        case "scan_started": {
+        case 'scan_started': {
           const evt = data as ScanStartedEvent;
           setScanFoldersTotal(evt.folders_total);
           break;
         }
 
-        case "scan_folder_complete": {
+        case 'scan_folder_complete': {
           const evt = data as ScanFolderCompleteEvent;
           addScanFolder(evt.folder);
           updateScanTotals({
@@ -80,7 +85,7 @@ export function useFolderScan(): UseFolderScanResult {
           break;
         }
 
-        case "scan_complete": {
+        case 'scan_complete': {
           const evt = data as ScanCompleteEvent;
           updateScanTotals({
             totalFiles: evt.total_files_found,
@@ -119,6 +124,7 @@ export function useFolderScan(): UseFolderScanResult {
   /** Kick off a new folder scan. */
   const startScan = useCallback(
     async (folderPath: string, cacheOnly = false, exclusions?: ScanExclusions) => {
+      clearScanFolders();
       setIsScanning(true);
       setScanComplete(false);
 
@@ -131,7 +137,7 @@ export function useFolderScan(): UseFolderScanResult {
           body.excluded_subfolders = exclusions.subfolders;
           body.excluded_files = exclusions.files;
         }
-        const res = await apiPost<{ job_id: string }>("/api/upload/scan-folder-async", body);
+        const res = await apiPost<{ job_id: string }>('/api/upload/scan-folder-async', body);
         setScanJobId(res.job_id);
         setJobId(res.job_id);
       } catch {
@@ -139,7 +145,7 @@ export function useFolderScan(): UseFolderScanResult {
         setScanComplete(false);
       }
     },
-    [setScanJobId, setIsScanning, setScanComplete],
+    [setScanJobId, setIsScanning, setScanComplete, clearScanFolders],
   );
 
   /** Cancel an in-progress scan. */
