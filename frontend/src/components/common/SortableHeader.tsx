@@ -1,4 +1,4 @@
-import { ChevronUpIcon, ChevronDownIcon } from "../../utils/icons.tsx";
+import { ChevronDownIcon, ChevronUpIcon } from '../../utils/icons.tsx';
 
 interface SortableHeaderProps {
   label: string;
@@ -15,13 +15,11 @@ export default function SortableHeader({ label, active, ascending, onSort }: Sor
     >
       <span className="inline-flex items-center gap-1">
         {label}
-        <span className={`inline-flex flex-col leading-none ${active ? "text-nlr-blue" : "text-gray-300"}`}>
-          <ChevronUpIcon
-            className={`w-3 h-3 ${active && ascending ? "text-nlr-blue" : ""}`}
-          />
-          <ChevronDownIcon
-            className={`w-3 h-3 ${active && !ascending ? "text-nlr-blue" : ""}`}
-          />
+        <span
+          className={`inline-flex flex-col leading-none ${active ? 'text-nlr-blue' : 'text-gray-300'}`}
+        >
+          <ChevronUpIcon className={`w-3 h-3 ${active && ascending ? 'text-nlr-blue' : ''}`} />
+          <ChevronDownIcon className={`w-3 h-3 ${active && !ascending ? 'text-nlr-blue' : ''}`} />
         </span>
       </span>
     </th>
