@@ -1,10 +1,11 @@
-import { NavLink } from "react-router-dom";
-import { useAppStore } from "../../stores/appStore.ts";
+import { NavLink } from 'react-router-dom';
+import { useAppStore } from '../../stores/appStore.ts';
 
 const navItems = [
-  { to: "/", label: "Upload" },
-  { to: "/files", label: "Browse Uploaded Files" },
-  { to: "/logs", label: "History" },
+  { to: '/', label: 'Upload' },
+  { to: '/large-folder-upload', label: 'Large Folder Upload' },
+  { to: '/files', label: 'Browse Uploaded Files' },
+  { to: '/logs', label: 'History' },
 ];
 
 interface NavBarProps {
@@ -21,10 +22,8 @@ export default function NavBar({ onAboutClick }: NavBarProps) {
           <NavLink
             key={item.to}
             to={item.to}
-            end={item.to === "/"}
-            className={({ isActive }) =>
-              `nlr-menu-item${isActive ? " active" : ""}`
-            }
+            end={item.to === '/'}
+            className={({ isActive }) => `nlr-menu-item${isActive ? ' active' : ''}`}
           >
             {item.label}
           </NavLink>
@@ -32,6 +31,7 @@ export default function NavBar({ onAboutClick }: NavBarProps) {
         <div className="flex-grow" />
         {version && (
           <button
+            type="button"
             onClick={onAboutClick}
             className="text-xs font-mono bg-nlr-blue text-white px-2 py-1 rounded hover:bg-nlr-blue-light mr-2"
             title="About this application"
@@ -41,17 +41,13 @@ export default function NavBar({ onAboutClick }: NavBarProps) {
         )}
         <NavLink
           to="/delete"
-          className={({ isActive }) =>
-            `nlr-menu-item${isActive ? " active" : ""}`
-          }
+          className={({ isActive }) => `nlr-menu-item${isActive ? ' active' : ''}`}
         >
           Clear Hard Drive
         </NavLink>
         <NavLink
           to="/settings"
-          className={({ isActive }) =>
-            `nlr-menu-item${isActive ? " active" : ""}`
-          }
+          className={({ isActive }) => `nlr-menu-item${isActive ? ' active' : ''}`}
         >
           Settings
         </NavLink>
