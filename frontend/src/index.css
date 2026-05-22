@@ -2,16 +2,16 @@
 
 /* ── NLR Brand Colors (Tailwind v4 @theme) ── */
 @theme {
-  --color-nlr-blue: #0079C2;
-  --color-nlr-blue-light: #00A3E4;
-  --color-nlr-yellow: #EE9521;
-  --color-nlr-yellow-light: #FFC423;
-  --color-nlr-green: #5D9732;
-  --color-nlr-green-light: #9ECE42;
-  --color-nlr-gray: #5E6A71;
-  --color-nlr-gray-light: #D1D5D8;
-  --color-nlr-gray-bg: #EDEDED;
-  --color-nlr-gray-footer: #E3E6E8;
+  --color-nlr-blue: #0079c2;
+  --color-nlr-blue-light: #00a3e4;
+  --color-nlr-yellow: #ee9521;
+  --color-nlr-yellow-light: #ffc423;
+  --color-nlr-green: #5d9732;
+  --color-nlr-green-light: #9ece42;
+  --color-nlr-gray: #5e6a71;
+  --color-nlr-gray-light: #d1d5d8;
+  --color-nlr-gray-bg: #ededed;
+  --color-nlr-gray-footer: #e3e6e8;
   --color-nlr-text: #212224;
   --font-family-roboto: "Roboto", "Helvetica Neue", Helvetica, sans-serif;
 }
@@ -50,8 +50,8 @@ body {
 
 /* ── Menu bar ── */
 .nlr-menu-bar {
-  background: #EDEDED;
-  border-top: 1px solid #D6D4D4;
+  background: #ededed;
+  border-top: 1px solid #d6d4d4;
   height: 50px;
 }
 
@@ -65,7 +65,7 @@ body {
 }
 
 .nlr-menu-item {
-  color: #2F2F2F;
+  color: #2f2f2f;
   padding: 14px 20px;
   font-size: 14px;
   text-decoration: none;
@@ -74,20 +74,20 @@ body {
 
 .nlr-menu-item:hover,
 .nlr-menu-item.active {
-  background: #5E6A71;
+  background: #5e6a71;
   color: #fff;
 }
 
 /* ── NLR Footer ── */
 .nlr-footer {
-  background-color: #E3E6E8;
+  background-color: #e3e6e8;
   font-size: 14px;
   font-weight: 400;
   line-height: 1.2;
 }
 
 .nlr-footer-top {
-  background-color: #D1D5D8;
+  background-color: #d1d5d8;
   padding: 1.5em 0;
 }
 
@@ -101,7 +101,7 @@ body {
 }
 
 .nlr-footer a:hover {
-  color: #C60;
+  color: #c60;
   text-decoration: underline;
 }
 
@@ -124,7 +124,7 @@ body {
 }
 
 .drop-zone.drag-over {
-  border-color: #0079C2;
+  border-color: #0079c2;
   background-color: rgba(0, 121, 194, 0.1);
 }
 
@@ -140,11 +140,24 @@ body {
 
 /* ── Spinner ── */
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .spinner {
   animation: spin 1s linear infinite;
+}
+
+/* ── Indeterminate scanning bar ── */
+@keyframes scanning {
+  0%   { margin-left: -40%; width: 40%; }
+  50%  { margin-left: 30%; width: 70%; }
+  100% { margin-left: 100%; width: 40%; }
+}
+
+.scanning-bar {
+  animation: scanning 1.5s ease-in-out infinite;
 }
 
 /* ── Step indicator transitions ── */
