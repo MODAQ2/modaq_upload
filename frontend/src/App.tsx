@@ -23,6 +23,7 @@ export default function App() {
         <Route index element={<UploadPage />} />
         <Route path="delete" element={<DeletePage />} />
         <Route path="files" element={<FilesPage />} />
+        <Route path="large-folder-upload" element={<LargeFolderUploadPage />} />
         <Route path="logs" element={<LogsPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
