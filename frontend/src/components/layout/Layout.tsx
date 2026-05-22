@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { Outlet } from "react-router-dom";
-import NotificationStack from "../common/Notification.tsx";
-import AboutModal from "./AboutModal.tsx";
-import Footer from "./Footer.tsx";
-import Header from "./Header.tsx";
-import NavBar from "./NavBar.tsx";
+import { useState } from 'react';
+import { Outlet } from 'react-router-dom';
+import NotificationStack from '../common/Notification.tsx';
+import AboutModal from './AboutModal.tsx';
+import Footer from './Footer.tsx';
+import Header from './Header.tsx';
+import NavBar from './NavBar.tsx';
 
 export default function Layout() {
   const [aboutOpen, setAboutOpen] = useState(false);
