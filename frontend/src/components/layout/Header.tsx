@@ -1,7 +1,7 @@
-import { useAppStore } from "../../stores/appStore.ts";
+import { useAppStore } from '../../stores/appStore.ts';
 
 export default function Header() {
-  const displayName = useAppStore((s) => s.settings?.display_name ?? "MODAQ Upload");
+  const displayName = useAppStore((s) => s.settings?.display_name ?? 'MODAQ Upload');
 
   return (
     <header className="nlr-header">
