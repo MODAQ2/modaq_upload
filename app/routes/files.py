@@ -143,16 +143,31 @@ def browse_local() -> tuple[Response, int]:
     if not path.is_dir():
         return jsonify({"error": f"Not a directory: {path}"}), 400
 
-    # Build response — single-pass walk for recursive MCAP counts + cache checks.
+    # Build response — single-pass walk for recursive file counts + cache checks.
     # os.walk with onerror skips unreadable subdirectories instead of aborting,
     # which is important on Linux where permission errors are common.
     cache = get_cache_service()
     bucket = g.settings.s3_bucket
 
-    folder_mcap_counts: dict[str, int] = {}
+    # Get allowed extensions (add dot prefix) and a per-extension category lookup.
+    allowed_exts = tuple(f".{ext}" for ext in g.settings.allowed_extensions)
+    category_names = [str(cat["name"]) for cat in g.settings.file_categories]
+    ext_to_category: dict[str, str] = {}
+    for cat in g.settings.file_categories:
+        cat_name = str(cat.get("name", "other"))
+        for ext in cat.get("extensions", []):
+            ext_to_category[str(ext).lower().lstrip(".")] = cat_name
+
+    def _empty_counts() -> dict[str, int]:
+        return dict.fromkeys(category_names, 0)
+
+    folder_file_counts: dict[str, int] = {}
     folder_uploaded_counts: dict[str, int] = {}
+    folder_category_counts: dict[str, dict[str, int]] = {}
+    direct_category_counts: dict[str, int] = _empty_counts()
+    total_category_counts: dict[str, int] = _empty_counts()
     files: list[dict[str, str | int | float | bool]] = []
-    mcap_count = 0
+    file_count = 0
     direct_uploaded = 0
 
     def _walk_error(err: OSError) -> None:
@@ -163,47 +178,58 @@ def browse_local() -> tuple[Response, int]:
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
 
         for fname in filenames:
-            if not fname.endswith(".mcap") or fname.startswith("."):
+            if not fname.lower().endswith(allowed_exts) or fname.startswith("."):
                 continue
 
-            mcap_path = Path(dirpath) / fname
-            rel = mcap_path.relative_to(path)
+            file_path = Path(dirpath) / fname
+            rel = file_path.relative_to(path)
             parts = rel.parts
 
             try:
-                file_stat = mcap_path.stat()
+                file_stat = file_path.stat()
             except OSError:
                 continue
 
             uploaded = (
-                cache.check_exists_by_filename(bucket, mcap_path.name, file_stat.st_size) is True
+                cache.check_exists_by_filename(bucket, file_path.name, file_stat.st_size) is True
             )
 
+            ext = file_path.suffix.lower().lstrip(".")
+            category = ext_to_category.get(ext, "other")
+            if category in total_category_counts:
+                total_category_counts[category] += 1
+
             if len(parts) == 1:
-                # Direct child MCAP file
-                mcap_count += 1
+                # Direct child file
+                file_count += 1
                 if uploaded:
                     direct_uploaded += 1
+                if category in direct_category_counts:
+                    direct_category_counts[category] += 1
                 files.append(
                     {
-                        "name": mcap_path.name,
-                        "path": str(mcap_path),
+                        "name": file_path.name,
+                        "path": str(file_path),
                         "size": file_stat.st_size,
                         "mtime": file_stat.st_mtime,
                         "already_uploaded": uploaded,
+                        "file_category": category,
                     }
                 )
             else:
                 # Nested — attribute to the immediate subfolder
                 folder_name = parts[0]
-                folder_mcap_counts[folder_name] = folder_mcap_counts.get(folder_name, 0) + 1
+                folder_file_counts[folder_name] = folder_file_counts.get(folder_name, 0) + 1
                 if uploaded:
                     folder_uploaded_counts[folder_name] = (
                         folder_uploaded_counts.get(folder_name, 0) + 1
                     )
+                cat_counts = folder_category_counts.setdefault(folder_name, _empty_counts())
+                if category in cat_counts:
+                    cat_counts[category] += 1
 
     # Build folder list from direct children (non-hidden directories)
-    folders: list[dict[str, str | int]] = []
+    folders: list[dict[str, str | int | dict[str, int]]] = []
     try:
         for entry in sorted(path.iterdir(), key=lambda x: x.name.lower()):
             if entry.name.startswith("."):
@@ -214,8 +240,11 @@ def browse_local() -> tuple[Response, int]:
                         {
                             "name": entry.name,
                             "path": str(entry),
-                            "mcap_count": folder_mcap_counts.get(entry.name, 0),
+                            "file_count": folder_file_counts.get(entry.name, 0),
                             "already_uploaded": folder_uploaded_counts.get(entry.name, 0),
+                            "category_counts": folder_category_counts.get(
+                                entry.name, _empty_counts()
+                            ),
                         }
                     )
             except PermissionError:
@@ -299,9 +328,11 @@ def browse_local() -> tuple[Response, int]:
             "breadcrumbs": breadcrumbs,
             "quick_links": quick_links,
             "folders": folders,
-            "files": files,  # Only MCAP files
-            "mcap_count": mcap_count,
-            "total_mcap_count": mcap_count + sum(folder_mcap_counts.values()),
+            "files": files,  # All allowed files
+            "file_count": file_count,
+            "total_file_count": file_count + sum(folder_file_counts.values()),
+            "category_counts": direct_category_counts,
+            "total_category_counts": total_category_counts,
             "already_uploaded": direct_uploaded + sum(folder_uploaded_counts.values()),
         }
     ), 200
