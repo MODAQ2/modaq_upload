@@ -5,30 +5,37 @@
  * Uses @tanstack/react-virtual for 20K+ file handling.
  */
 
-import { memo, useEffect, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-
-import { formatBytes } from "../../utils/format/bytes.ts";
-import { formatDate } from "../../utils/format/date.ts";
-import { SpinnerIcon, CheckIcon, XIcon, MinusIcon, CircleIcon, ChevronDownIcon } from "../../utils/icons.tsx";
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { memo, useEffect, useRef, useState } from 'react';
 import type {
   SortDir,
   SortKey,
   UnifiedFileRow,
   UnifiedStatus,
   UploadPhase,
-} from "../../types/upload.ts";
+} from '../../types/upload.ts';
+import { formatBytes } from '../../utils/format/bytes.ts';
+import { formatDate } from '../../utils/format/date.ts';
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  CircleIcon,
+  MinusIcon,
+  SpinnerIcon,
+  XIcon,
+} from '../../utils/icons.tsx';
+
 // ── Grid template (fixed across all phases) ──
 
-const GRID_COLS = "grid-cols-[42px_36px_1fr_1fr_80px_120px_1fr]";
+const GRID_COLS = 'grid-cols-[42px_36px_1fr_1fr_80px_120px_1fr]';
 const ROW_HEIGHT = 40;
 
 // Row background colors by status (uploading + summary phases only)
 const STATUS_ROW_BG: Record<string, string> = {
-  completed: "bg-green-50/70",
-  failed: "bg-red-50/70",
-  skipped: "bg-yellow-50/50",
-  in_progress: "bg-blue-50/60",
+  completed: 'bg-green-50/70',
+  failed: 'bg-red-50/70',
+  skipped: 'bg-yellow-50/50',
+  in_progress: 'bg-blue-50/60',
 };
 
 // ── Props ──
@@ -88,22 +95,22 @@ export default function UnifiedFileTable({
 
   // Reset auto-follow when entering upload phase
   const prevPhaseRef = useRef(phase);
-  if (phase === "uploading" && prevPhaseRef.current !== "uploading") {
+  if (phase === 'uploading' && prevPhaseRef.current !== 'uploading') {
     setAutoFollow(true);
     lastActivePathRef.current = null;
   }
   prevPhaseRef.current = phase;
 
   useEffect(() => {
-    if (phase !== "uploading" || !autoFollow) return;
+    if (phase !== 'uploading' || !autoFollow) return;
 
-    const activeFile = files.find((f) => f.status === "in_progress");
+    const activeFile = files.find((f) => f.status === 'in_progress');
     if (!activeFile || activeFile.path === lastActivePathRef.current) return;
 
     lastActivePathRef.current = activeFile.path;
     const idx = files.indexOf(activeFile);
     if (idx >= 0) {
-      rowVirtualizer.scrollToIndex(idx, { align: "center" });
+      rowVirtualizer.scrollToIndex(idx, { align: 'center' });
     }
   }, [phase, autoFollow, files, rowVirtualizer]);
 
@@ -118,7 +125,7 @@ export default function UnifiedFileTable({
 
         {/* Col 2: Checkbox / Status icon */}
         <div className="flex items-center justify-center">
-          {phase === "review" ? (
+          {phase === 'review' ? (
             <IndeterminateCheckbox
               checked={headerChecked}
               indeterminate={headerIndeterminate}
@@ -173,9 +180,9 @@ export default function UnifiedFileTable({
 
         {/* Col 7: Detail (context-dependent) */}
         <div>
-          {phase === "review" && "Modified"}
-          {phase === "uploading" && ""}
-          {phase === "summary" && "S3 Path"}
+          {phase === 'review' && 'Modified'}
+          {phase === 'uploading' && ''}
+          {phase === 'summary' && 'S3 Path'}
         </div>
       </div>
 
@@ -193,11 +200,12 @@ export default function UnifiedFileTable({
           <div
             style={{
               height: `${rowVirtualizer.getTotalSize()}px`,
-              width: "100%",
-              position: "relative",
+              width: '100%',
+              position: 'relative',
             }}
           >
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              // biome-ignore lint/style/noNonNullAssertion: virtualizer index is always within bounds
               const file = files[virtualRow.index]!;
               return (
                 <FileRow
@@ -208,10 +216,10 @@ export default function UnifiedFileTable({
                   isSelected={selectedPaths.has(file.path)}
                   onToggle={onToggleFile}
                   style={{
-                    position: "absolute",
+                    position: 'absolute',
                     top: 0,
                     left: 0,
-                    width: "100%",
+                    width: '100%',
                     height: `${virtualRow.size}px`,
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
@@ -224,23 +232,23 @@ export default function UnifiedFileTable({
 
       {/* Footer */}
       <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 text-xs text-gray-500">
-        {files.length.toLocaleString()} file{files.length !== 1 ? "s" : ""}
+        {files.length.toLocaleString()} file{files.length !== 1 ? 's' : ''}
       </div>
 
       {/* Auto-scroll toggle (upload phase only) */}
-      {phase === "uploading" && (
+      {phase === 'uploading' && (
         <button
           type="button"
           onClick={() => setAutoFollow((prev) => !prev)}
           className={`absolute bottom-12 right-4 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
             rounded-full shadow-lg transition-colors z-10 ${
               autoFollow
-                ? "bg-nlr-blue text-white hover:bg-blue-700"
-                : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+                ? 'bg-nlr-blue text-white hover:bg-blue-700'
+                : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
             }`}
         >
           <ChevronDownIcon className="w-3.5 h-3.5" />
-          {autoFollow ? "Following active" : "Auto-scroll off"}
+          {autoFollow ? 'Following active' : 'Auto-scroll off'}
         </button>
       )}
     </div>
@@ -266,7 +274,7 @@ const FileRow = memo(function FileRow({
   onToggle,
   style,
 }: FileRowProps) {
-  const statusBg = phase !== "review" ? (STATUS_ROW_BG[row.status] ?? "") : "";
+  const statusBg = phase !== 'review' ? (STATUS_ROW_BG[row.status] ?? '') : '';
 
   return (
     <div
@@ -274,13 +282,11 @@ const FileRow = memo(function FileRow({
       style={style}
     >
       {/* Col 1: Row number */}
-      <span className="text-gray-400 text-center tabular-nums text-[10px]">
-        {rowNumber}
-      </span>
+      <span className="text-gray-400 text-center tabular-nums text-[10px]">{rowNumber}</span>
 
       {/* Col 2: Checkbox / Status icon */}
       <div className="flex items-center justify-center">
-        {phase === "review" ? (
+        {phase === 'review' ? (
           <input
             type="checkbox"
             checked={isSelected}
@@ -293,8 +299,11 @@ const FileRow = memo(function FileRow({
       </div>
 
       {/* Col 3: Filename */}
-      <span className="text-gray-700 truncate" title={row.filename}>
-        {row.filename}
+      <span className="flex items-center gap-1.5 min-w-0">
+        <span className="text-gray-700 truncate" title={row.filename}>
+          {row.filename}
+        </span>
+        <CategoryBadge category={row.fileCategory} />
       </span>
 
       {/* Col 4: Folder */}
@@ -303,9 +312,7 @@ const FileRow = memo(function FileRow({
       </span>
 
       {/* Col 5: Size */}
-      <span className="text-gray-500 text-right tabular-nums">
-        {formatBytes(row.size)}
-      </span>
+      <span className="text-gray-500 text-right tabular-nums">{formatBytes(row.size)}</span>
 
       {/* Col 6: Status */}
       <div className="flex justify-center">
@@ -314,13 +321,11 @@ const FileRow = memo(function FileRow({
 
       {/* Col 7: Detail */}
       <div className="text-gray-400 truncate">
-        {phase === "review" && formatDate(row.mtime)}
-        {phase === "uploading" && row.status === "in_progress" && (
+        {phase === 'review' && formatDate(row.mtime)}
+        {phase === 'uploading' && row.status === 'in_progress' && (
           <MiniProgressBar percent={row.progressPercent} />
         )}
-        {phase === "summary" && (
-          <span title={row.s3Path}>{row.s3Path}</span>
-        )}
+        {phase === 'summary' && <span title={row.s3Path}>{row.s3Path}</span>}
       </div>
     </div>
   );
@@ -328,15 +333,36 @@ const FileRow = memo(function FileRow({
 
 // ── Sub-components ──
 
+/**
+ * Small chip showing which configured category a file belongs to. Stable colors
+ * for the two built-in categories; falls back to neutral gray for custom ones.
+ */
+function CategoryBadge({ category }: { category: string }) {
+  if (!category) return null;
+  const styles: Record<string, string> = {
+    data: 'bg-blue-50 text-blue-700 border-blue-200',
+    logs: 'bg-amber-50 text-amber-700 border-amber-200',
+  };
+  const cls = styles[category] ?? 'bg-gray-100 text-gray-600 border-gray-200';
+  return (
+    <span
+      className={`shrink-0 px-1.5 py-0 rounded text-[9px] uppercase tracking-wide font-semibold border ${cls}`}
+      title={`Category: ${category}`}
+    >
+      {category}
+    </span>
+  );
+}
+
 function StatusIcon({ status }: { status: UnifiedStatus }) {
   switch (status) {
-    case "in_progress":
+    case 'in_progress':
       return <SpinnerIcon className="w-4 h-4 text-nlr-blue animate-spin" />;
-    case "completed":
+    case 'completed':
       return <CheckIcon className="w-4 h-4 text-green-700" strokeWidth={2.5} />;
-    case "failed":
+    case 'failed':
       return <XIcon className="w-4 h-4 text-red-500" strokeWidth={2.5} />;
-    case "skipped":
+    case 'skipped':
       return <MinusIcon className="w-4 h-4 text-yellow-500" strokeWidth={2.5} />;
     default:
       // queued, new, already_uploaded
@@ -354,8 +380,8 @@ function StatusBadge({
   phase: UploadPhase;
 }) {
   // Review phase: show "new" or "uploaded" based on status
-  if (phase === "review") {
-    if (status === "already_uploaded") {
+  if (phase === 'review') {
+    if (status === 'already_uploaded') {
       return (
         <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-yellow-100 text-yellow-700 transition-colors duration-300">
           uploaded
@@ -371,24 +397,24 @@ function StatusBadge({
 
   // Upload / Summary phase
   const styles: Record<string, string> = {
-    queued: "bg-gray-100 text-gray-500",
-    in_progress: "bg-blue-100 text-nlr-blue",
-    completed: "bg-green-100 text-green-700",
-    skipped: "bg-yellow-100 text-yellow-700",
-    failed: "bg-red-100 text-red-700",
+    queued: 'bg-gray-100 text-gray-500',
+    in_progress: 'bg-blue-100 text-nlr-blue',
+    completed: 'bg-green-100 text-green-700',
+    skipped: 'bg-yellow-100 text-yellow-700',
+    failed: 'bg-red-100 text-red-700',
   };
 
   const labels: Record<string, string> = {
-    queued: "queued",
-    in_progress: progressPercent > 0 ? `${Math.round(progressPercent)}%` : "analyzing",
-    completed: "uploaded",
-    skipped: "skipped",
-    failed: "failed",
+    queued: 'queued',
+    in_progress: progressPercent > 0 ? `${Math.round(progressPercent)}%` : 'analyzing',
+    completed: 'uploaded',
+    skipped: 'skipped',
+    failed: 'failed',
   };
 
   return (
     <span
-      className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors duration-300 ${styles[status] ?? "bg-gray-100 text-gray-500"}`}
+      className={`px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors duration-300 ${styles[status] ?? 'bg-gray-100 text-gray-500'}`}
     >
       {labels[status] ?? status}
     </span>
@@ -415,7 +441,7 @@ function SortHeader({
   dir,
   onSort,
   disabled = false,
-  className = "",
+  className = '',
 }: {
   label: string;
   sortKey: SortKey;
@@ -426,15 +452,15 @@ function SortHeader({
   className?: string;
 }) {
   const active = sortKey === currentKey;
-  const arrow = active ? (dir === "asc" ? " \u2191" : " \u2193") : "";
+  const arrow = active ? (dir === 'asc' ? ' \u2191' : ' \u2193') : '';
   return (
     <button
       type="button"
       onClick={() => !disabled && onSort(sortKey)}
       disabled={disabled}
       className={`flex items-center gap-1 select-none
-        ${disabled ? "cursor-default text-gray-400" : "hover:text-gray-700 cursor-pointer"}
-        ${active && !disabled ? "text-gray-700" : ""}
+        ${disabled ? 'cursor-default text-gray-400' : 'hover:text-gray-700 cursor-pointer'}
+        ${active && !disabled ? 'text-gray-700' : ''}
         ${className}`}
     >
       {label}
@@ -470,4 +496,3 @@ function IndeterminateCheckbox({
     />
   );
 }
-

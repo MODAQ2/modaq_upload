@@ -10,10 +10,10 @@
  * Used during upload phase for jobs processed in batches.
  */
 
-import type { BatchState } from "../../types/api.ts";
-import ProgressBar from "../common/ProgressBar.tsx";
-import Spinner from "../common/Spinner.tsx";
-import { InfoIcon } from "../../utils/icons.tsx";
+import type { BatchState } from '../../types/api.ts';
+import { InfoIcon } from '../../utils/icons.tsx';
+import ProgressBar from '../common/ProgressBar.tsx';
+import Spinner from '../common/Spinner.tsx';
 
 interface BatchProgressProps {
   /** Current batch state */
@@ -51,9 +51,10 @@ export default function BatchProgress({
     return null;
   }
 
-  const batchProgressPercent = batchState.files_in_batch > 0
-    ? (batchState.files_processed / batchState.files_in_batch) * 100
-    : 0;
+  const batchProgressPercent =
+    batchState.files_in_batch > 0
+      ? (batchState.files_processed / batchState.files_in_batch) * 100
+      : 0;
 
   const currentBatch = batchState.batch_id + 1; // 0-indexed to 1-indexed
   const totalBatches = batchState.total_batches;
@@ -67,7 +68,7 @@ export default function BatchProgress({
             <h3 className="text-sm font-semibold text-gray-900">
               Batch {currentBatch} of {totalBatches}
             </h3>
-            {isRunning && batchState.status === "processing" && <Spinner size="sm" />}
+            {isRunning && batchState.status === 'processing' && <Spinner size="sm" />}
           </div>
           <div className="text-xs text-gray-500">
             {batchState.files_in_batch} files in this batch
@@ -86,7 +87,7 @@ export default function BatchProgress({
           <span>
             Uploaded: {batchState.files_uploaded} | Failed: {batchState.files_failed}
           </span>
-          {batchState.status === "completed" && batchState.duration_seconds && (
+          {batchState.status === 'completed' && batchState.duration_seconds && (
             <span>{batchState.duration_seconds.toFixed(1)}s</span>
           )}
         </div>
@@ -110,7 +111,8 @@ export default function BatchProgress({
             Uploaded: {jobFilesUploaded} | Failed: {jobFilesFailed}
           </span>
           <span>
-            {totalBatches - currentBatch} batch{totalBatches - currentBatch !== 1 ? "es" : ""} remaining
+            {totalBatches - currentBatch} batch{totalBatches - currentBatch !== 1 ? 'es' : ''}{' '}
+            remaining
           </span>
         </div>
       </div>
@@ -120,9 +122,8 @@ export default function BatchProgress({
         <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200 text-sm text-blue-700">
           <InfoIcon className="w-4 h-4 flex-shrink-0 mt-0.5" />
           <div>
-            <strong>Large job detected:</strong> Files are being processed in batches
-            to optimize memory usage and performance. Full results will be available
-            after completion.
+            <strong>Large job detected:</strong> Files are being processed in batches to optimize
+            memory usage and performance. Full results will be available after completion.
           </div>
         </div>
       )}

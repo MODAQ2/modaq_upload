@@ -5,9 +5,9 @@
  * instead (handled separately in UploadPage).
  */
 
-import { useState } from "react";
+import { useState } from 'react';
 
-import type { StatusFilter } from "../../types/upload.ts";
+import type { StatusFilter } from '../../types/upload.ts';
 
 interface ReviewToolbarProps {
   statusFilter: StatusFilter;
@@ -44,13 +44,13 @@ export default function ReviewToolbar({
   onSelectFirstN,
   headerChecked,
 }: ReviewToolbarProps) {
-  const [selectFirstNInput, setSelectFirstNInput] = useState("");
+  const [selectFirstNInput, setSelectFirstNInput] = useState('');
 
   const handleSelectFirstN = () => {
     const n = Number.parseInt(selectFirstNInput, 10);
     if (Number.isNaN(n) || n <= 0) return;
     onSelectFirstN(n);
-    setSelectFirstNInput("");
+    setSelectFirstNInput('');
   };
 
   return (
@@ -85,9 +85,7 @@ export default function ReviewToolbar({
           <span className="text-nlr-blue font-medium">
             {selectedCount.toLocaleString()} of {totalCount.toLocaleString()} selected
           </span>
-          {showFilteredCount && (
-            <span>({filteredCount.toLocaleString()} shown)</span>
-          )}
+          {showFilteredCount && <span>({filteredCount.toLocaleString()} shown)</span>}
         </div>
       </div>
 
@@ -103,8 +101,12 @@ export default function ReviewToolbar({
             Not Uploaded
           </button>
           <span className="text-gray-300">|</span>
-          <button type="button" onClick={onToggleAllFiltered} className="text-nlr-blue hover:underline">
-            {headerChecked ? "Deselect" : "Select"} Shown
+          <button
+            type="button"
+            onClick={onToggleAllFiltered}
+            className="text-nlr-blue hover:underline"
+          >
+            {headerChecked ? 'Deselect' : 'Select'} Shown
           </button>
           <span className="text-gray-300">|</span>
           <button type="button" onClick={onDeselectAll} className="text-nlr-blue hover:underline">
@@ -118,7 +120,9 @@ export default function ReviewToolbar({
             min="1"
             value={selectFirstNInput}
             onChange={(e) => setSelectFirstNInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSelectFirstN(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSelectFirstN();
+            }}
             placeholder="#"
             className="border border-gray-300 rounded px-1.5 py-0.5 text-xs bg-white w-16 tabular-nums"
           />
