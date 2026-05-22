@@ -20,26 +20,29 @@ export default function CsvPreview({ csvFiles }: CsvPreviewProps) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const loadPreview = useCallback(async (path: string) => {
-    // Toggle off if clicking same file
-    if (previewPath === path) {
-      setPreviewPath(null);
-      setPreviewData(null);
-      return;
-    }
+  const loadPreview = useCallback(
+    async (path: string) => {
+      // Toggle off if clicking same file
+      if (previewPath === path) {
+        setPreviewPath(null);
+        setPreviewData(null);
+        return;
+      }
 
-    setPreviewPath(path);
-    setPreviewLoading(true);
-    setPreviewError(null);
-    try {
-      const data = await apiGet<CsvPreviewResponse>("/api/logs/csv-preview", { path });
-      setPreviewData(data);
-    } catch (err) {
-      setPreviewError(err instanceof Error ? err.message : "Failed to load preview");
-    } finally {
-      setPreviewLoading(false);
-    }
-  }, [previewPath]);
+      setPreviewPath(path);
+      setPreviewLoading(true);
+      setPreviewError(null);
+      try {
+        const data = await apiGet<CsvPreviewResponse>('/api/logs/csv-preview', { path });
+        setPreviewData(data);
+      } catch (err) {
+        setPreviewError(err instanceof Error ? err.message : 'Failed to load preview');
+      } finally {
+        setPreviewLoading(false);
+      }
+    },
+    [previewPath],
+  );
 
   if (csvFiles.length === 0) {
     return null;
