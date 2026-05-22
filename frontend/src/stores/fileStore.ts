@@ -4,34 +4,47 @@
  * Exposes a useSyncExternalStore-compatible interface. Uses rAF batching
  * so that multiple SSE updates within a single frame coalesce into one
  * React re-render.
+ *
+ * Maintains a `sortedIndex` array updated in place on per-row mutations:
+ * `updateFile` is O(1) regardless of how many rows are in the store. The
+ * full O(n log n) sort only runs when the user explicitly clicks a sort
+ * column header, or when files are added/removed in bulk (scan / mark).
  */
 
-import type { FileUploadState, ScannedFolder } from "../types/api.ts";
+import type { FileUploadState, ScannedFolder } from '../types/api.ts';
 import type {
   SortDir,
   SortKey,
   StatusFilter,
   UnifiedFileRow,
   UnifiedStatus,
-} from "../types/upload.ts";
+} from '../types/upload.ts';
 
 type Listener = () => void;
 
 export class FileStore {
   private rows = new Map<string, UnifiedFileRow>();
   private listeners = new Set<Listener>();
-  private snapshot: UnifiedFileRow[] = [];
-  private dirty = true;
+
+  // `sortedIndex` is the canonical "in sort order" view of every row.
+  // `pathToSortedIndex` gives O(1) slot lookup for updateFile.
+  // `filteredIndex` is what getSnapshot returns — derived from sortedIndex
+  // by applying the current filter + search.
+  private sortedIndex: UnifiedFileRow[] = [];
+  private pathToSortedIndex = new Map<string, number>();
+  private filteredIndex: UnifiedFileRow[] = [];
+  private sortedDirty = false;
+  private filteredDirty = false;
 
   // Sort / filter state
-  private sortKey: SortKey = "filename";
-  private sortDir: SortDir = "asc";
-  private filter: StatusFilter = "all";
-  private search = "";
+  private sortKey: SortKey = 'filename';
+  private sortDir: SortDir = 'asc';
+  private filter: StatusFilter = 'all';
+  private search = '';
 
-  // Frozen sort — during upload, positions stay fixed
+  // Frozen flag: when true, setSort is a no-op (positions stay fixed during upload).
+  // No separate frozen array — updateFile patches sortedIndex in place either way.
   private frozen = false;
-  private frozenArray: UnifiedFileRow[] = [];
 
   // rAF batching
   private rafId: number | null = null;
@@ -44,11 +57,9 @@ export class FileStore {
   };
 
   getSnapshot = (): UnifiedFileRow[] => {
-    if (this.dirty) {
-      this.snapshot = this.buildSnapshot();
-      this.dirty = false;
-    }
-    return this.snapshot;
+    if (this.sortedDirty) this.rebuildSortedIndex();
+    if (this.filteredDirty) this.rebuildFilteredIndex();
+    return this.filteredIndex;
   };
 
   // ── Public getters ──
@@ -92,13 +103,13 @@ export class FileStore {
     for (const folder of folders) {
       this.addFolderInternal(folder);
     }
-    this.invalidate();
+    this.markStructureDirty();
     this.notify();
   }
 
   addFolderFromScan(folder: ScannedFolder): void {
     this.addFolderInternal(folder);
-    this.invalidate();
+    this.markStructureDirty();
     this.notify();
   }
 
@@ -110,15 +121,16 @@ export class FileStore {
         path: file.path,
         filename: file.filename,
         size: file.size,
-        folder: folder.relative_path === "." ? "" : folder.relative_path,
+        folder: folder.relative_path === '.' ? '' : folder.relative_path,
         mtime: file.mtime,
         alreadyUploaded: uploaded,
-        status: uploaded ? "already_uploaded" : "new",
+        status: uploaded ? 'already_uploaded' : 'new',
         progressPercent: 0,
-        s3Path: "",
+        s3Path: '',
         duration: null,
         speed: null,
-        error: "",
+        error: '',
+        fileCategory: file.file_category ?? 'other',
       });
     }
   }
@@ -133,12 +145,14 @@ export class FileStore {
     const updated = { ...existing, ...update };
     this.rows.set(path, updated);
 
-    // If frozen, update the frozen array in-place at O(1)
-    if (this.frozen && updated._frozenIndex != null) {
-      this.frozenArray[updated._frozenIndex] = updated;
+    // O(1) in-place patch — positions never change on a content update.
+    const idx = this.pathToSortedIndex.get(path);
+    if (idx !== undefined) {
+      this.sortedIndex[idx] = updated;
     }
 
-    this.invalidate();
+    // The status field can flip filter membership; re-derive on the next snapshot.
+    this.filteredDirty = true;
     this.scheduleNotify();
   }
 
@@ -149,7 +163,7 @@ export class FileStore {
       const existing = this.rows.get(f.local_path);
       if (!existing) continue;
 
-      this.rows.set(f.local_path, {
+      const updated: UnifiedFileRow = {
         ...existing,
         status: mapApiStatus(f.status),
         progressPercent: f.progress_percent,
@@ -157,9 +171,15 @@ export class FileStore {
         duration: f.upload_duration_seconds,
         speed: f.upload_speed_mbps,
         error: f.error_message,
-      });
+        fileCategory: f.file_category || existing.fileCategory,
+      };
+      this.rows.set(f.local_path, updated);
+      const idx = this.pathToSortedIndex.get(f.local_path);
+      if (idx !== undefined) {
+        this.sortedIndex[idx] = updated;
+      }
     }
-    this.invalidate();
+    this.filteredDirty = true;
     this.notify();
   }
 
@@ -174,73 +194,57 @@ export class FileStore {
     }
     // All remaining rows are "queued"
     for (const [key, row] of this.rows) {
-      this.rows.set(key, { ...row, status: "queued" });
+      this.rows.set(key, { ...row, status: 'queued' });
     }
-    this.invalidate();
+    this.markStructureDirty();
     this.notify();
   }
 
   // ── Freeze / unfreeze sort ──
+  //
+  // Frozen state means setSort is ignored — useful during upload so that
+  // rows don't reshuffle under the user when their status changes. The
+  // in-place updateFile already keeps positions stable; the only thing
+  // freeze actually prevents is an explicit column-header click.
 
   freezeSort(): void {
-    // Build the frozen array from the current snapshot and stamp indices
-    const current = this.buildSnapshot();
-    this.frozenArray = [...current];
-    for (let i = 0; i < this.frozenArray.length; i++) {
-      const row = this.frozenArray[i]!;
-      const updated = { ...row, _frozenIndex: i };
-      this.frozenArray[i] = updated;
-      this.rows.set(row.path, updated);
-    }
+    if (this.sortedDirty) this.rebuildSortedIndex();
     this.frozen = true;
-    this.invalidate();
     this.notify();
   }
 
   unfreezeSort(): void {
     this.frozen = false;
-    this.frozenArray = [];
-    // Clear frozen indices
-    for (const [key, row] of this.rows) {
-      if (row._frozenIndex != null) {
-        this.rows.set(key, { ...row, _frozenIndex: undefined });
-      }
-    }
-    this.invalidate();
     this.notify();
   }
 
   // ── Sort / filter / search ──
 
   setSort(key: SortKey, dir?: SortDir): void {
+    if (this.frozen) return;
     if (dir) {
       this.sortKey = key;
       this.sortDir = dir;
     } else if (this.sortKey === key) {
-      this.sortDir = this.sortDir === "asc" ? "desc" : "asc";
+      this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
     } else {
       this.sortKey = key;
-      this.sortDir = "asc";
+      this.sortDir = 'asc';
     }
-    // Re-freeze with new sort if frozen
-    if (this.frozen) {
-      this.frozen = false; // temporarily unfreeze to rebuild
-      this.freezeSort();
-      return;
-    }
-    this.invalidate();
+    this.sortedDirty = true;
+    this.filteredDirty = true;
     this.notify();
   }
 
   setFilter(filter: StatusFilter): void {
     this.filter = filter;
-    this.invalidate();
+    this.filteredDirty = true;
     this.notify();
   }
 
   setSearch(query: string): void {
     this.search = query;
-    this.invalidate();
+    this.filteredDirty = true;
     this.notify();
   }
 
@@ -248,14 +252,16 @@ export class FileStore {
 
   clear(): void {
     this.rows.clear();
-    this.snapshot = [];
-    this.dirty = false;
+    this.sortedIndex = [];
+    this.pathToSortedIndex.clear();
+    this.filteredIndex = [];
+    this.sortedDirty = false;
+    this.filteredDirty = false;
     this.frozen = false;
-    this.frozenArray = [];
-    this.sortKey = "filename";
-    this.sortDir = "asc";
-    this.filter = "all";
-    this.search = "";
+    this.sortKey = 'filename';
+    this.sortDir = 'asc';
+    this.filter = 'all';
+    this.search = '';
     if (this.rafId != null) {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
@@ -265,77 +271,56 @@ export class FileStore {
 
   // ── Internals ──
 
-  private buildSnapshot(): UnifiedFileRow[] {
-    const source = this.frozen ? this.frozenArray : Array.from(this.rows.values());
-    let result = source;
-
-    // Filter
-    result = this.applyFilter(result);
-
-    // Search
-    if (this.search) {
-      const q = this.search.toLowerCase();
-      result = result.filter(
-        (r) =>
-          r.filename.toLowerCase().includes(q) ||
-          r.folder.toLowerCase().includes(q),
-      );
-    }
-
-    // Sort (skip if frozen — positions are fixed)
-    if (!this.frozen) {
-      result = this.applySort(result);
-    }
-
-    return result;
+  /** Membership in rows changed (add/remove/bulk mark). Re-sort + re-filter. */
+  private markStructureDirty(): void {
+    this.sortedDirty = true;
+    this.filteredDirty = true;
   }
 
-  private applyFilter(rows: UnifiedFileRow[]): UnifiedFileRow[] {
-    switch (this.filter) {
-      case "all":
-        return rows;
-      case "new":
-        return rows.filter((r) => r.status === "new" || !r.alreadyUploaded);
-      case "uploaded":
-        return rows.filter((r) => r.status === "already_uploaded" || r.alreadyUploaded);
-      case "queued":
-        return rows.filter((r) => r.status === "queued");
-      case "in_progress":
-        return rows.filter((r) => r.status === "in_progress");
-      case "completed":
-        return rows.filter((r) => r.status === "completed");
-      case "skipped":
-        return rows.filter((r) => r.status === "skipped");
-      case "failed":
-        return rows.filter((r) => r.status === "failed");
-      default:
-        return rows;
-    }
-  }
-
-  private applySort(rows: UnifiedFileRow[]): UnifiedFileRow[] {
-    const dir = this.sortDir === "asc" ? 1 : -1;
-    return [...rows].sort((a, b) => {
-      switch (this.sortKey) {
-        case "filename":
+  private rebuildSortedIndex(): void {
+    const arr = Array.from(this.rows.values());
+    const dir = this.sortDir === 'asc' ? 1 : -1;
+    const key = this.sortKey;
+    arr.sort((a, b) => {
+      switch (key) {
+        case 'filename':
           return dir * a.filename.localeCompare(b.filename);
-        case "folder":
+        case 'folder':
           return dir * a.folder.localeCompare(b.folder);
-        case "size":
+        case 'size':
           return dir * (a.size - b.size);
-        case "mtime":
+        case 'mtime':
           return dir * (a.mtime - b.mtime);
-        case "status": {
+        case 'status':
           return dir * (statusOrder(a.status) - statusOrder(b.status));
-        }
         default:
           return 0;
       }
     });
+    this.sortedIndex = arr;
+    this.pathToSortedIndex.clear();
+    for (let i = 0; i < arr.length; i++) {
+      this.pathToSortedIndex.set(arr[i]?.path, i);
+    }
+    this.sortedDirty = false;
   }
 
-  private invalidate(): void {
-    this.dirty = true;
+  private rebuildFilteredIndex(): void {
+    let result: UnifiedFileRow[] = this.sortedIndex;
+
+    if (this.filter !== 'all') {
+      result = result.filter((r) => matchesFilter(r, this.filter));
+    }
+
+    if (this.search) {
+      const q = this.search.toLowerCase();
+      result = result.filter(
+        (r) => r.filename.toLowerCase().includes(q) || r.folder.toLowerCase().includes(q),
+      );
+    }
+
+    this.filteredIndex = result;
+    this.filteredDirty = false;
   }
 
   private notify(): void {
@@ -357,36 +342,59 @@ export class FileStore {
 
 function mapApiStatus(status: string): UnifiedStatus {
   switch (status) {
-    case "completed":
-      return "completed";
-    case "skipped":
-      return "skipped";
-    case "failed":
-    case "cancelled":
-      return "failed";
-    case "uploading":
-    case "analyzing":
-      return "in_progress";
+    case 'completed':
+      return 'completed';
+    case 'skipped':
+      return 'skipped';
+    case 'failed':
+    case 'cancelled':
+      return 'failed';
+    case 'uploading':
+    case 'analyzing':
+      return 'in_progress';
     default:
-      return "queued";
+      return 'queued';
+  }
+}
+
+function matchesFilter(r: UnifiedFileRow, filter: StatusFilter): boolean {
+  switch (filter) {
+    case 'all':
+      return true;
+    case 'new':
+      return r.status === 'new' || !r.alreadyUploaded;
+    case 'uploaded':
+      return r.status === 'already_uploaded' || r.alreadyUploaded;
+    case 'queued':
+      return r.status === 'queued';
+    case 'in_progress':
+      return r.status === 'in_progress';
+    case 'completed':
+      return r.status === 'completed';
+    case 'skipped':
+      return r.status === 'skipped';
+    case 'failed':
+      return r.status === 'failed';
+    default:
+      return true;
   }
 }
 
 function statusOrder(status: UnifiedStatus): number {
   switch (status) {
-    case "new":
+    case 'new':
       return 0;
-    case "already_uploaded":
+    case 'already_uploaded':
       return 1;
-    case "in_progress":
+    case 'in_progress':
       return 2;
-    case "queued":
+    case 'queued':
       return 3;
-    case "completed":
+    case 'completed':
       return 4;
-    case "skipped":
+    case 'skipped':
       return 5;
-    case "failed":
+    case 'failed':
       return 6;
     default:
       return 7;

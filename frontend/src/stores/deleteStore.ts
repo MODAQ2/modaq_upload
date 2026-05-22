@@ -1,27 +1,15 @@
-import { create } from "zustand";
-import type { DeleteJobResult, DeleteScanFile } from "../types/delete.ts";
+import type { DeleteJobResult, DeleteScanFile } from '../types/delete.ts';
+import { createJobStore } from './createJobStore.ts';
 
 export type DeleteStep = 1 | 2 | 3 | 4 | 5;
 
-interface DeleteState {
-  // Current step
-  step: DeleteStep;
-  setStep: (step: DeleteStep) => void;
-
-  // Selected folder
-  folderPath: string;
-  setFolderPath: (path: string) => void;
-
+interface DeleteExtra {
   // Scan results
   scanResults: DeleteScanFile[];
   scanTotalSize: number;
   permissionWarning: boolean;
   isScanning: boolean;
-  setScanResults: (
-    files: DeleteScanFile[],
-    totalSize: number,
-    permissionWarning: boolean,
-  ) => void;
+  setScanResults: (files: DeleteScanFile[], totalSize: number, permissionWarning: boolean) => void;
   setPermissionWarning: (warning: boolean) => void;
   setIsScanning: (scanning: boolean) => void;
 
@@ -32,37 +20,38 @@ interface DeleteState {
   setDeleteJobId: (id: string | null) => void;
   setCompletedJob: (job: DeleteJobResult | null) => void;
   setIsDeleting: (deleting: boolean) => void;
-
-  // Reset
-  reset: () => void;
 }
 
-const initialState = {
-  step: 1 as DeleteStep,
-  folderPath: "",
-  scanResults: [] as DeleteScanFile[],
+const initialExtra: DeleteExtra = {
+  scanResults: [],
   scanTotalSize: 0,
   permissionWarning: false,
   isScanning: false,
   deleteJobId: null,
   completedJob: null,
   isDeleting: false,
+  // placeholder setters — overridden by extraSlice
+  setScanResults: () => {},
+  setPermissionWarning: () => {},
+  setIsScanning: () => {},
+  setDeleteJobId: () => {},
+  setCompletedJob: () => {},
+  setIsDeleting: () => {},
 };
 
-export const useDeleteStore = create<DeleteState>((set) => ({
-  ...initialState,
+export const useDeleteStore = createJobStore<DeleteStep, DeleteExtra>(
+  1 as DeleteStep,
+  initialExtra,
+  (set) => ({
+    ...initialExtra,
 
-  setStep: (step) => set({ step }),
-  setFolderPath: (folderPath) => set({ folderPath }),
+    setScanResults: (scanResults, scanTotalSize, permissionWarning) =>
+      set({ scanResults, scanTotalSize, permissionWarning }),
+    setPermissionWarning: (permissionWarning) => set({ permissionWarning }),
+    setIsScanning: (isScanning) => set({ isScanning }),
 
-  setScanResults: (scanResults, scanTotalSize, permissionWarning) =>
-    set({ scanResults, scanTotalSize, permissionWarning }),
-  setPermissionWarning: (permissionWarning) => set({ permissionWarning }),
-  setIsScanning: (isScanning) => set({ isScanning }),
-
-  setDeleteJobId: (deleteJobId) => set({ deleteJobId }),
-  setCompletedJob: (completedJob) => set({ completedJob }),
-  setIsDeleting: (isDeleting) => set({ isDeleting }),
-
-  reset: () => set(initialState),
-}));
+    setDeleteJobId: (deleteJobId) => set({ deleteJobId }),
+    setCompletedJob: (completedJob) => set({ completedJob }),
+    setIsDeleting: (isDeleting) => set({ isDeleting }),
+  }),
+);

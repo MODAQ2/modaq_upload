@@ -1,10 +1,10 @@
-import { create } from "zustand";
-import { apiGet, apiPut } from "../api/client.ts";
-import type { AppSettings, VersionInfo } from "../types/api.ts";
+import { create } from 'zustand';
+import { apiGet, apiPut } from '../api/client.ts';
+import type { AppSettings, VersionInfo } from '../types/api.ts';
 
 export interface Notification {
   id: string;
-  type: "success" | "error" | "info" | "warning";
+  type: 'success' | 'error' | 'info' | 'warning';
   message: string;
 }
 
@@ -21,7 +21,7 @@ interface AppState {
 
   // Notifications
   notifications: Notification[];
-  addNotification: (type: Notification["type"], message: string) => void;
+  addNotification: (type: Notification['type'], message: string) => void;
   removeNotification: (id: string) => void;
 }
 
@@ -33,21 +33,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadSettings: async () => {
     set({ settingsLoading: true });
     try {
-      const settings = await apiGet<AppSettings>("/api/settings");
+      const settings = await apiGet<AppSettings>('/api/settings');
       set({ settings, settingsLoading: false });
     } catch {
       set({ settingsLoading: false });
-      get().addNotification("error", "Failed to load settings");
+      get().addNotification('error', 'Failed to load settings');
     }
   },
 
   updateSettings: async (updates) => {
     try {
-      const settings = await apiPut<AppSettings>("/api/settings", updates);
+      const settings = await apiPut<AppSettings>('/api/settings', updates);
       set({ settings });
-      get().addNotification("success", "Settings saved");
+      get().addNotification('success', 'Settings saved');
     } catch {
-      get().addNotification("error", "Failed to save settings");
+      get().addNotification('error', 'Failed to save settings');
     }
   },
 
@@ -56,7 +56,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadVersion: async () => {
     try {
-      const version = await apiGet<VersionInfo>("/api/settings/version");
+      const version = await apiGet<VersionInfo>('/api/settings/version');
       set({ version });
     } catch {
       // Silently fail — version is non-critical
