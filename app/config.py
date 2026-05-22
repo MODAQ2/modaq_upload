@@ -30,6 +30,7 @@ ENV_S3_BUCKET = "MODAQ_S3_BUCKET"
 ENV_DEFAULT_UPLOAD_FOLDER = "MODAQ_DEFAULT_UPLOAD_FOLDER"
 ENV_DISPLAY_NAME = "MODAQ_DISPLAY_NAME"
 ENV_LOG_DIRECTORY = "MODAQ_LOG_DIRECTORY"
+ENV_ALLOWED_EXTENSIONS = "MODAQ_ALLOWED_EXTENSIONS"
 
 
 @functools.cache
@@ -84,6 +85,20 @@ class Settings:
             "default_upload_folder": "",
             "display_name": "MODAQ Uploader",
             "log_directory": "logs",
+            "file_categories": [
+                {
+                    "name": "data",
+                    "extensions": ["mcap", "tdms", "done", "csv"],
+                    "partition_interval": "10min",
+                    "description": "High-frequency data files",
+                },
+                {
+                    "name": "logs",
+                    "extensions": ["txt", "log", "yaml", "logs"],
+                    "partition_interval": "daily",
+                    "description": "System and operation logs",
+                },
+            ],
             "batch_processing": {
                 "enabled": True,
                 "batch_size": 100,
@@ -205,6 +220,24 @@ class Settings:
         if not path.is_absolute():
             path = BASE_DIR / path
         return path
+
+    @property
+    def file_categories(self) -> list[dict[str, Any]]:
+        """Get the list of file categories."""
+        return list(self._settings.get("file_categories", []))
+
+    @property
+    def allowed_extensions(self) -> list[str]:
+        """Get the flat list of allowed file extensions (lowercase, no dot).
+
+        Aggregates extensions from all file_categories.
+        """
+        categories = self.file_categories
+        all_exts = set()
+        for cat in categories:
+            for ext in cat.get("extensions", []):
+                all_exts.add(str(ext).lower().lstrip("."))
+        return sorted(list(all_exts))
 
     @property
     def batch_processing(self) -> dict[str, Any]:
