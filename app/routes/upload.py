@@ -4,7 +4,6 @@ import json
 import tempfile
 import threading
 import time
-from collections import deque
 from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ from typing import Any
 from flask import Blueprint, Response, jsonify, request
 
 from app.config import get_settings
+from app.services.sse_manager import get_sse_manager
 from app.services.upload_manager import (
     FileUploadState,
     UploadJob,
@@ -21,57 +21,6 @@ from app.services.upload_manager import (
 
 upload_bp = Blueprint("upload", __name__)
 
-# Store for SSE clients per job
-_sse_queues: dict[str, list[deque[dict[str, Any]]]] = {}
-_sse_events: dict[str, threading.Event] = {}  # Events to signal new data (replaces polling)
-_sse_timestamps: dict[str, float] = {}  # Track last activity for TTL cleanup
-_sse_lock = threading.Lock()
-
-# Configuration
-SSE_QUEUE_TTL_SECONDS = 3600  # Clean up queues after 1 hour of inactivity
-SSE_HEARTBEAT_INTERVAL_SECONDS = 15  # Send heartbeat every 15 seconds
-
-
-def _cleanup_old_sse_queues() -> int:
-    """Clean up SSE queues that haven't been accessed recently.
-
-    Returns:
-        Number of queues removed
-    """
-    now = time.time()
-    removed = 0
-    with _sse_lock:
-        expired = [
-            job_id
-            for job_id, timestamp in _sse_timestamps.items()
-            if now - timestamp > SSE_QUEUE_TTL_SECONDS
-        ]
-        for job_id in expired:
-            _sse_queues.pop(job_id, None)
-            _sse_events.pop(job_id, None)
-            _sse_timestamps.pop(job_id, None)
-            removed += 1
-    return removed
-
-
-def send_sse_event(job_id: str, data: dict[str, Any]) -> None:
-    """Send an SSE event to all clients listening for a job.
-
-    This wakes up all waiting SSE generators via the event signal,
-    avoiding busy-wait polling.
-    """
-    with _sse_lock:
-        queues = _sse_queues.get(job_id, [])
-        for q in queues:
-            q.append(data)
-
-        # Update last activity timestamp
-        _sse_timestamps[job_id] = time.time()
-
-        # Signal waiting threads that new data is available
-        if job_id in _sse_events:
-            _sse_events[job_id].set()
-
 
 def _make_analysis_callback(
     job_id: str,
@@ -79,7 +28,7 @@ def _make_analysis_callback(
     """Create an analysis progress callback that sends SSE events."""
 
     def callback(job: UploadJob, file_state: FileUploadState) -> None:
-        send_sse_event(
+        get_sse_manager().send_event(
             job_id,
             {
                 "type": "analysis_progress",
@@ -92,6 +41,64 @@ def _make_analysis_callback(
         )
 
     return callback
+
+
+# 4 Hz cap on non-terminal progress events. The S3 byte_callback fires per chunk
+# (~1 M times across a 1 TB upload); without throttling we would emit ~1 M SSE
+# events. Terminal events (COMPLETED / FAILED / CANCELLED) always bypass the
+# throttle so the frontend never misses the final state.
+SSE_EMIT_INTERVAL_SECONDS = 0.25
+_TERMINAL_JOB_STATUSES = (
+    UploadStatus.COMPLETED,
+    UploadStatus.FAILED,
+    UploadStatus.CANCELLED,
+)
+
+
+def _make_throttled_progress_callback(
+    large_job_threshold: int | None = None,
+) -> Callable[[UploadJob], None]:
+    """Create a progress callback that coalesces SSE events at 4 Hz.
+
+    Terminal events always emit. Closure-local state means each job gets its
+    own throttle window — safe to share across threads since callers hold
+    ``job._progress_lock`` for the check-and-stamp.
+    """
+
+    def progress_callback(job: UploadJob) -> None:
+        is_terminal = job.status in _TERMINAL_JOB_STATUSES
+        if not is_terminal:
+            now = time.monotonic()
+            with job._progress_lock:
+                if (now - job._last_emit_ts) < SSE_EMIT_INTERVAL_SECONDS:
+                    return
+                job._last_emit_ts = now
+
+        sse = get_sse_manager()
+        if is_terminal:
+            # Large jobs read per-file results from /api/upload/results (SQLite-backed)
+            # rather than receiving a 10k-row payload here. Small jobs keep the
+            # legacy behavior — frontend merges the full file array directly.
+            if (
+                large_job_threshold is not None
+                and len(job.files) >= large_job_threshold
+            ):
+                payload = job.to_progress_dict()
+                payload["terminal"] = True
+                sse.send_event(job.job_id, payload)
+            else:
+                sse.send_event(job.job_id, job.to_dict())
+        else:
+            sse.send_event(job.job_id, job.to_progress_dict())
+
+    return progress_callback
+
+
+def _large_job_threshold() -> int:
+    """Read the live setting for the large-job cutoff."""
+    return int(
+        get_settings().batch_processing.get("large_job_threshold", 1000)
+    )
 
 
 @upload_bp.route("/analyze", methods=["POST"])
@@ -150,7 +157,7 @@ def analyze_files() -> tuple[Response, int]:
         # Send final job state when analysis completes
         final_job = manager.get_job(job.job_id)
         if final_job:
-            send_sse_event(
+            get_sse_manager().send_event(
                 job.job_id,
                 {
                     "type": "analysis_complete",
@@ -198,12 +205,7 @@ def start_upload(job_id: str) -> tuple[Response, int]:
         if data:
             skip_duplicates = data.get("skip_duplicates", True)
 
-    def progress_callback(job: UploadJob) -> None:
-        """Send progress updates via SSE — lightweight during upload, full at completion."""
-        if job.status in (UploadStatus.COMPLETED, UploadStatus.FAILED, UploadStatus.CANCELLED):
-            send_sse_event(job.job_id, job.to_dict())
-        else:
-            send_sse_event(job.job_id, job.to_progress_dict())
+    progress_callback = _make_throttled_progress_callback(_large_job_threshold())
 
     # Start upload in background thread
     def run_upload() -> None:
@@ -238,19 +240,12 @@ def get_progress(job_id: str) -> Response:
     manager = get_upload_manager()
 
     def generate() -> Generator[str, None, None]:
-        # Create a queue for this client and an event for signaling
-        queue: deque[dict[str, Any]] = deque()
-        event = threading.Event()
-
-        with _sse_lock:
-            if job_id not in _sse_queues:
-                _sse_queues[job_id] = []
-            _sse_queues[job_id].append(queue)
-            _sse_events[job_id] = event
-            _sse_timestamps[job_id] = time.time()
+        # Register this client with the SSE manager
+        sse_mgr = get_sse_manager()
+        queue, event = sse_mgr.register_client(job_id)
 
         # Periodic cleanup of old queues
-        _cleanup_old_sse_queues()
+        sse_mgr.cleanup_old_queues()
 
         try:
             # Send initial state
@@ -281,7 +276,38 @@ def get_progress(job_id: str) -> Response:
                             }
                             yield f"data: {json.dumps(replay)}\n\n"
             elif scan_job:
-                yield f"data: {json.dumps({'type': 'scan_initial', 'status': scan_job.status})}\n\n"
+                if scan_job.status in ("completed", "failed", "cancelled"):
+                    # Fast/cached scan completed before this EventSource connected —
+                    # all SSE events were sent to an empty queue and dropped.
+                    # Replay the full results immediately so the frontend never waits
+                    # for the 15-second heartbeat timeout.
+                    for folder_data in scan_job.scanned_folders:
+                        replay_event = {
+                            "type": "scan_folder_complete",
+                            "folder": folder_data,
+                            "folders_scanned": scan_job.folders_scanned,
+                            "folders_total": scan_job.folders_total,
+                            "running_totals": {
+                                "total_files_found": scan_job.total_files_found,
+                                "total_already_uploaded": scan_job.total_already_uploaded,
+                                "total_size": scan_job.total_size,
+                            },
+                        }
+                        yield f"data: {json.dumps(replay_event)}\n\n"
+                    terminal_data = {
+                        "type": "scan_complete",
+                        "status": scan_job.status,
+                        "folders_scanned": scan_job.folders_scanned,
+                        "folders_total": scan_job.folders_total,
+                        "total_files_found": scan_job.total_files_found,
+                        "total_already_uploaded": scan_job.total_already_uploaded,
+                        "total_size": scan_job.total_size,
+                    }
+                    yield f"data: {json.dumps(terminal_data)}\n\n"
+                    return
+                else:
+                    initial = {"type": "scan_initial", "status": scan_job.status}
+                    yield f"data: {json.dumps(initial)}\n\n"
 
             last_heartbeat_time = time.time()
 
@@ -304,12 +330,12 @@ def get_progress(job_id: str) -> Response:
 
                 # Send heartbeat if no activity for a while
                 now = time.time()
-                if now - last_heartbeat_time > SSE_HEARTBEAT_INTERVAL_SECONDS:
+                if now - last_heartbeat_time > sse_mgr.heartbeat_interval:
                     yield ": heartbeat\n\n"  # Comment line, ignored by EventSource
                     last_heartbeat_time = now
 
                 # Wait for signal (blocking, no CPU waste) with timeout for heartbeat
-                event.wait(timeout=SSE_HEARTBEAT_INTERVAL_SECONDS)
+                event.wait(timeout=sse_mgr.heartbeat_interval)
                 event.clear()
 
                 # Check if job still exists (upload or scan)
@@ -355,15 +381,7 @@ def get_progress(job_id: str) -> Response:
                     return
 
         finally:
-            # Clean up queue and event
-            with _sse_lock:
-                if job_id in _sse_queues and queue in _sse_queues[job_id]:
-                    _sse_queues[job_id].remove(queue)
-                    if not _sse_queues[job_id]:
-                        # Last client disconnected, remove event too
-                        _sse_queues.pop(job_id, None)
-                        _sse_events.pop(job_id, None)
-                        # Keep timestamp for TTL cleanup
+            sse_mgr.deregister_client(job_id, queue)
 
     return Response(
         generate(),
@@ -494,13 +512,13 @@ def cleanup_sse_queues() -> tuple[Response, int]:
     Returns:
         JSON response with cleanup statistics
     """
-    removed = _cleanup_old_sse_queues()
+    removed = get_sse_manager().cleanup_old_queues()
     return jsonify(
         {
             "success": True,
             "queues_removed": removed,
-            "active_queues": len(_sse_queues),
-            "ttl_seconds": SSE_QUEUE_TTL_SECONDS,
+            "active_queues": get_sse_manager().queue_count,
+            "ttl_seconds": get_sse_manager().ttl_seconds,
         }
     ), 200
 
@@ -628,7 +646,7 @@ def scan_folder_async() -> tuple[Response, int]:
     )
 
     def scan_progress_callback(job_id: str, event_data: dict[str, Any]) -> None:
-        send_sse_event(job_id, event_data)
+        get_sse_manager().send_event(job_id, event_data)
 
     def run_scan() -> None:
         manager.scan_folder_async(
@@ -709,12 +727,7 @@ def bulk_analyze() -> tuple[Response, int]:
     job.pre_filter_stats = pre_filter_stats
     analysis_progress_callback = _make_analysis_callback(job.job_id)
 
-    def upload_progress_callback(job: UploadJob) -> None:
-        """Send upload progress updates via SSE — lightweight during upload, full at completion."""
-        if job.status in (UploadStatus.COMPLETED, UploadStatus.FAILED, UploadStatus.CANCELLED):
-            send_sse_event(job.job_id, job.to_dict())
-        else:
-            send_sse_event(job.job_id, job.to_progress_dict())
+    upload_progress_callback = _make_throttled_progress_callback(_large_job_threshold())
 
     # Start in background thread
     def run_bulk_job() -> None:
@@ -741,7 +754,7 @@ def bulk_analyze() -> tuple[Response, int]:
             )
             final_job = manager.get_job(job.job_id)
             if final_job:
-                send_sse_event(
+                get_sse_manager().send_event(
                     job.job_id,
                     {
                         "type": "analysis_complete",
