@@ -3,14 +3,14 @@
 // ── Upload types ──
 
 export type UploadStatus =
-  | "pending"
-  | "analyzing"
-  | "ready"
-  | "uploading"
-  | "completed"
-  | "failed"
-  | "skipped"
-  | "cancelled";
+  | 'pending'
+  | 'analyzing'
+  | 'ready'
+  | 'uploading'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled';
 
 export interface FileUploadState {
   filename: string;
@@ -19,6 +19,8 @@ export interface FileUploadState {
   file_size_formatted: string;
   status: UploadStatus;
   s3_path: string;
+  /** Configured file category name (e.g. "data", "logs"). Falls back to "other". */
+  file_category: string;
   start_time: string | null;
   bytes_uploaded: number;
   progress_percent: number;
@@ -45,6 +47,26 @@ export interface UploadJobProgress {
   files_uploaded: number;
   cancelled: boolean;
   files: FileUploadState[];
+  /**
+   * Present only on the terminal event for jobs above large_job_threshold.
+   * When true, `files` carries the cap-8 active list (not the full job);
+   * full per-file results must be fetched from /api/upload/results.
+   */
+  terminal?: boolean;
+}
+
+/** Pagination payload returned by /api/upload/results/<job_id>. */
+export interface JobResultsPage {
+  job_id: string;
+  files: FileUploadState[];
+  pagination: {
+    page: number;
+    per_page: number;
+    total_files: number;
+    total_pages: number;
+    has_next: boolean;
+    has_prev: boolean;
+  };
 }
 
 export interface UploadJob {
@@ -98,7 +120,7 @@ export interface FilePreFilterStatus {
 // ── SSE event types ──
 
 export interface AnalysisProgressEvent {
-  type: "analysis_progress";
+  type: 'analysis_progress';
   job_id: string;
   job_status: UploadStatus;
   file: FileUploadState;
@@ -107,13 +129,13 @@ export interface AnalysisProgressEvent {
 }
 
 export interface AnalysisCompleteEvent {
-  type: "analysis_complete";
+  type: 'analysis_complete';
   job: UploadJob;
   auto_upload?: boolean;
 }
 
 export interface AutoUploadStartingEvent {
-  type: "auto_upload_starting";
+  type: 'auto_upload_starting';
   job_id: string;
 }
 
@@ -134,7 +156,7 @@ export interface BatchState {
   batch_id: number;
   total_batches: number;
   files_in_batch: number;
-  status: "pending" | "processing" | "completed" | "failed" | "cancelled";
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
   files_processed: number;
   files_uploaded: number;
   files_failed: number;
@@ -146,14 +168,14 @@ export interface BatchState {
 }
 
 export interface BatchStartedEvent {
-  type: "batch_started";
+  type: 'batch_started';
   batch_id: number;
   total_batches: number;
   files_in_batch: number;
 }
 
 export interface BatchProgressEvent {
-  type: "batch_progress";
+  type: 'batch_progress';
   batch_id: number;
   active_files: FileUploadState[]; // Max 8 items
   batch_files_completed: number;
@@ -164,16 +186,16 @@ export interface BatchProgressEvent {
 }
 
 export interface BatchCompletedEvent {
-  type: "batch_completed";
+  type: 'batch_completed';
   batch_id: number;
   files_uploaded: number;
   files_failed: number;
 }
 
 export interface JobCompletedEvent {
-  type: "job_completed";
+  type: 'job_completed';
   job_id: string;
-  status: "completed" | "failed" | "cancelled";
+  status: 'completed' | 'failed' | 'cancelled';
   total_files: number;
   files_uploaded: number;
   files_failed: number;
@@ -210,6 +232,8 @@ export interface ScannedFileInfo {
   mtime: number;
   relative_path: string;
   already_uploaded?: boolean;
+  /** Configured file category (e.g. "data", "logs"). Falls back to "other". */
+  file_category?: string;
 }
 
 export interface ScannedFolder {
@@ -222,13 +246,13 @@ export interface ScannedFolder {
 }
 
 export interface ScanStartedEvent {
-  type: "scan_started";
+  type: 'scan_started';
   folders_total: number;
   root_folder: string;
 }
 
 export interface ScanFolderCompleteEvent {
-  type: "scan_folder_complete";
+  type: 'scan_folder_complete';
   folder: ScannedFolder;
   folders_scanned: number;
   folders_total: number;
@@ -240,7 +264,7 @@ export interface ScanFolderCompleteEvent {
 }
 
 export interface ScanCompleteEvent {
-  type: "scan_complete";
+  type: 'scan_complete';
   status: string;
   folders_scanned: number;
   folders_total: number;
@@ -272,8 +296,14 @@ export interface BrowseResponse {
   quick_links: QuickLink[];
   folders: LocalFolder[];
   files: LocalFile[];
-  mcap_count: number;
-  total_mcap_count: number;
+  /** Count of allowed files that are direct children of `current_path`. */
+  file_count: number;
+  /** Count of allowed files at this level plus all nested subfolders. */
+  total_file_count: number;
+  /** Per-category counts for direct children only (keyed by category name). */
+  category_counts: Record<string, number>;
+  /** Per-category counts including all nested subfolders (keyed by category name). */
+  total_category_counts: Record<string, number>;
   already_uploaded: number;
 }
 
@@ -290,8 +320,10 @@ export interface QuickLink {
 export interface LocalFolder {
   name: string;
   path: string;
-  mcap_count: number;
+  file_count: number;
   already_uploaded: number;
+  /** Per-category counts for files nested under this folder (keyed by category name). */
+  category_counts: Record<string, number>;
 }
 
 export interface LocalFile {
@@ -300,6 +332,8 @@ export interface LocalFile {
   size: number;
   mtime: number;
   already_uploaded?: boolean;
+  /** Configured category name (e.g. "data", "logs"). Falls back to "other". */
+  file_category?: string;
 }
 
 // ── S3 browser types ──
@@ -332,7 +366,7 @@ export interface S3Breadcrumb {
 
 // ── Settings types ──
 
-export type ValueSourceType = "builtin" | "default_file" | "settings_file" | "env";
+export type ValueSourceType = 'builtin' | 'default_file' | 'settings_file' | 'env';
 
 export interface ValueSource {
   source: ValueSourceType;
@@ -342,6 +376,13 @@ export interface ValueSource {
   env_var?: string;
 }
 
+export interface FileCategory {
+  name: string;
+  extensions: string[];
+  partition_interval: '10min' | 'daily';
+  description: string;
+}
+
 export interface AppSettings {
   aws_profile: string;
   aws_region: string;
@@ -349,6 +390,8 @@ export interface AppSettings {
   default_upload_folder: string;
   display_name: string;
   log_directory: string;
+  file_categories: FileCategory[];
+  allowed_extensions: string[];
   batch_processing?: BatchProcessingSettings;
   /** Provenance metadata returned by the API — not sent on PUT. */
   value_sources?: Record<string, ValueSource>;
