@@ -1,12 +1,13 @@
-import { useEffect } from "react";
-import { Route, Routes } from "react-router-dom";
-import Layout from "./components/layout/Layout.tsx";
-import DeletePage from "./pages/DeletePage.tsx";
-import FilesPage from "./pages/FilesPage.tsx";
-import LogsPage from "./pages/LogsPage.tsx";
-import SettingsPage from "./pages/SettingsPage.tsx";
-import UploadPage from "./pages/UploadPage.tsx";
-import { useAppStore } from "./stores/appStore.ts";
+import { useEffect } from 'react';
+import { Route, Routes } from 'react-router-dom';
+import Layout from './components/layout/Layout.tsx';
+import DeletePage from './pages/DeletePage.tsx';
+import FilesPage from './pages/FilesPage.tsx';
+import LargeFolderUploadPage from './pages/LargeFolderUploadPage.tsx';
+import LogsPage from './pages/LogsPage.tsx';
+import SettingsPage from './pages/SettingsPage.tsx';
+import UploadPage from './pages/UploadPage.tsx';
+import { useAppStore } from './stores/appStore.ts';
 
 export default function App() {
   const loadSettings = useAppStore((s) => s.loadSettings);
