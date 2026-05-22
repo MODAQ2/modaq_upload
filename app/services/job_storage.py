@@ -74,6 +74,10 @@ class JobStorage:
         """Initialize the database and create tables if needed."""
         try:
             conn = sqlite3.connect(str(DB_FILE), check_same_thread=False)
+            # WAL mode lets one writer + many readers proceed concurrently —
+            # required because per-file status updates fire from upload worker
+            # threads while the Flask route handlers serve /api/upload/results.
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA_SQL)
             conn.commit()
             conn.close()
