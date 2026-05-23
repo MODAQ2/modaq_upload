@@ -39,27 +39,50 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. Install dependencies:
+3. Install Python dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-4. (Optional) Install development dependencies:
+4. Install frontend dependencies and build the UI:
 
 ```bash
-pip install -r requirements-dev.txt
+cd frontend && npm install && npm run build && cd ..
 ```
 
 ## Usage
 
-### Running the Application (Development)
+### Running the Application
 
 ```bash
 python app.py
 ```
 
 The application will be available at `http://localhost:5000`.
+
+### Development (Live Reload)
+
+Run the Flask backend and Vite frontend separately for hot-reload during development:
+
+**Terminal 1 — Flask API (port 5000):**
+
+```bash
+python app.py
+```
+
+**Terminal 2 — Vite dev server (port 3000):**
+
+```bash
+cd frontend && npm run dev
+```
+
+Open `http://localhost:3000` — the Vite server proxies `/api` requests to Flask.
+After making frontend changes you're happy with, rebuild for production:
+
+```bash
+cd frontend && npm run build
+```
 
 ### Production Deployment (Linux)
 
@@ -238,31 +261,37 @@ ruff format app/ tests/
 mypy app/
 ```
 
+### Install Development Dependencies
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ### JavaScript Linting (Biome)
 
 ```bash
-npm run lint          # Check
-npm run lint:fix      # Auto-fix
+cd frontend && npm run lint          # Check
+cd frontend && npm run lint:fix      # Auto-fix
 ```
 
 ### JavaScript Type Checking
 
 ```bash
-npm run typecheck     # tsc --checkJs via jsconfig.json
+cd frontend && npm run typecheck
 ```
 
 ### JavaScript Testing (Vitest)
 
 ```bash
-npm run test          # Run all JS tests
-npm run test:watch    # Watch mode
-npm run test:coverage # With coverage report
+cd frontend && npm run test          # Run all JS tests
+cd frontend && npm run test:watch    # Watch mode
+cd frontend && npm run test:coverage # With coverage report
 ```
 
 ### All JS Checks
 
 ```bash
-npm run check         # Biome + tsc + Vitest
+cd frontend && npm run check   # Biome + tsc + Vitest
 ```
 
 ## Architecture
