@@ -2,7 +2,7 @@
 
 A Python based local web application for uploading MODAQ files to S3 with progress tracking, duplicate detection, and configuration.
 
-![MODAQ Upload front page showing the upload page with drag-and-drop area](./docs/img/upload_screen.png)
+![MODAQ Upload: Upload page showing the folder browser with per-folder upload status](./docs/images/index_upload.png)
 
 ## Features
 
@@ -65,19 +65,19 @@ The application will be available at `http://localhost:5000`.
 
 Run the Flask backend and Vite frontend separately for hot-reload during development:
 
-**Terminal 1 — Flask API (port 5000):**
+Terminal 1: Flask API (port 5000):
 
 ```bash
 python app.py
 ```
 
-**Terminal 2 — Vite dev server (port 3000):**
+Terminal 2: Vite dev server (port 3000):
 
 ```bash
 cd frontend && npm run dev
 ```
 
-Open `http://localhost:3000` — the Vite server proxies `/api` requests to Flask.
+Open `http://localhost:3000`. The Vite server proxies `/api` requests to Flask.
 After making frontend changes you're happy with, rebuild for production:
 
 ```bash
@@ -198,28 +198,140 @@ Settings are saved to `settings.json` (gitignored).
 
 ### Uploading Files
 
-1. Go to the Upload page
-2. Drag and drop MCAP files or click to select
-3. Review the analysis results showing timestamps and S3 paths
-4. Check "Skip duplicates" to avoid re-uploading existing files
-5. Click Upload Files to start
-6. Monitor progress in real-time
+See [Application Guide: Upload](#upload) below for a walkthrough.
 
 ### Browsing Files
 
-1. Go to the Browse Files page
-2. Navigate through the Hive-partitioned folder structure
-3. Use the search box to find specific files
+See [Application Guide: Browse Uploaded Files](#browse-uploaded-files) below.
 
 ### Updating the Application
 
-1. Go to Settings > Application Updates
-2. Click Check for Updates to see if updates are available
-3. Click Update Application to:
-   - Pull latest changes from git
-   - Reinstall Python dependencies
-   - Update modaq_toolkit to the latest version
-4. Restart the application after updating
+See [Application Guide: Updating the Software](#updating-the-software) below.
+
+## Application Guide
+
+### Upload
+
+![Upload page showing the folder browser with per-folder upload status and step indicator](./docs/images/index_upload.png)
+
+The Upload page walks you through uploading files in four steps: Select → Review → Upload → Complete.
+
+1. Navigate to the folder containing your MCAP files using the file browser. Quick Links on the left give fast access to common locations.
+2. The browser shows each subfolder's upload status: data file count, log file count, and how many have already been uploaded to S3.
+3. Check or uncheck folders to include or exclude them. Use Select All / None or search to filter.
+4. Click Upload N files to proceed to the Review step, where you can inspect the per-file S3 destination paths before committing.
+5. Already-uploaded files are skipped; no duplicates are created.
+
+For more than 500 files, use [Large Folder Upload](#large-folder-upload) instead.
+
+
+### Large Folder Upload
+
+![Large Folder Upload page showing the folder sync interface](./docs/images/large_folder_upload_index.png)
+
+The Large Folder Upload page syncs an entire folder tree to S3 without per-file analysis. Use this when you have 500+ files and don't need to inspect each file's timestamp individually.
+
+1. Navigate to the root folder you want to sync.
+2. Click Select This Folder to confirm.
+3. The folder structure is copied to S3 as-is. Already-uploaded files are skipped.
+
+
+### Browse Uploaded Files
+
+![Browse Uploaded Files page showing the S3 bucket folder list](./docs/images/browse_index.png)
+
+The Browse Uploaded Files page lets you navigate the contents of your S3 bucket directly from the app.
+
+1. Click any folder to drill down into it.
+2. Use the breadcrumb trail at the top to navigate back up.
+3. This is useful for verifying that uploads landed in the correct location.
+
+
+### History
+
+![History page showing upload sessions with file counts, data sizes, and transfer speeds](./docs/images/logs_index.png)
+
+The History page keeps a record of every upload session run from this machine.
+
+- Upload History tab: each session's date, file count, data transferred, transfer speed, and outcome (completed / skipped / failed). Click any row to expand the per-file breakdown. Use CSV to export a session log.
+- Event Log tab: application events for troubleshooting.
+
+The running totals at the top (files uploaded, total data, failed, sessions) summarise all sessions.
+
+
+### Clear Hard Drive
+
+![Clear Hard Drive page showing folder selection with uploaded/deletable file counts](./docs/images/delete_index.png)
+
+The Clear Hard Drive page removes local files that have already been uploaded to S3. Files are verified against S3 before any deletion.
+
+1. Navigate to the folder you want to clean up.
+2. The browser shows how many files are uploaded (deletable) vs not yet uploaded.
+3. Only uploaded files are deleted; files not yet in S3 are not touched.
+4. Click Clear N files and confirm to proceed through the workflow (Select → Review → Confirm → Clear → Complete).
+
+
+### Settings
+
+![Settings page showing AWS configuration fields](./docs/images/settings_index.png)
+
+The Settings page controls the AWS connection used for all uploads and browsing.
+
+- AWS Profile: profile from `~/.aws/credentials` to use.
+- AWS Region: region of your S3 bucket.
+- S3 Bucket: bucket files are uploaded to.
+- Default Upload Folder: pre-populates the file browser on the Upload page.
+- Display Name: title shown in the application header.
+- Log Directory: where upload history logs are stored.
+
+Fields marked *Locked: set by environment variable* are controlled by your `.env` file and cannot be changed from the UI (see [Configuration](#configuration)).
+
+
+### Updating the Software
+
+#### v1.1 and later: in-app update
+
+From v1.1 onwards, updates can be applied from within the app.
+
+Option A: via Settings:
+
+1. Click Settings in the navigation bar.
+2. Scroll down to the Software Update section.
+3. Click Check for updates.
+
+![Software Update section in Settings showing current version, commit, and Check for updates button](./docs/images/settings_index_software_update.png)
+
+4. If updates are available, click Update Application. This pulls the latest code, reinstalls Python dependencies, and updates `modaq_toolkit`.
+5. Restart the application after the update completes (`Ctrl+C` then `python app.py`, or restart the systemd service).
+
+Option B: via the About modal:
+
+1. Click the version badge (e.g. v1.1.0) in the navigation bar to open the About modal.
+2. Expand the Software Update section and follow the same steps.
+
+#### Before v1.1: manual update
+
+If you are running a version prior to v1.1, the in-app updater is not available. Update manually from the terminal:
+
+```bash
+cd modaq_upload
+git pull
+source venv/bin/activate   # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cd frontend && npm install && npm run build && cd ..
+```
+
+Then restart the application:
+
+```bash
+python app.py
+```
+
+Or, if running as a systemd service:
+
+```bash
+sudo systemctl restart modaq-upload
+```
 
 ## S3 Path Format
 
