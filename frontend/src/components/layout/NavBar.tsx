@@ -14,6 +14,7 @@ interface NavBarProps {
 
 export default function NavBar({ onAboutClick }: NavBarProps) {
   const version = useAppStore((s) => s.version?.version);
+  const openUpdateModal = useAppStore((s) => s.openUpdateModal);
 
   return (
     <nav className="nlr-menu-bar">
@@ -30,14 +31,24 @@ export default function NavBar({ onAboutClick }: NavBarProps) {
         ))}
         <div className="flex-grow" />
         {version && (
-          <button
-            type="button"
-            onClick={onAboutClick}
-            className="text-xs font-mono bg-nlr-blue text-white px-2 py-1 rounded hover:bg-nlr-blue-light mr-2"
-            title="About this application"
-          >
-            v{version}
-          </button>
+          <div className="flex items-center gap-1 mr-2">
+            <button
+              type="button"
+              onClick={onAboutClick}
+              className="text-xs font-mono bg-nlr-blue text-white px-2 py-1 rounded hover:bg-nlr-blue-light cursor-pointer transition-colors"
+              title="About this application"
+            >
+              v{version}
+            </button>
+            <button
+              type="button"
+              onClick={openUpdateModal}
+              className="text-xs font-mono bg-nlr-blue/80 text-white px-2 py-1 rounded hover:bg-nlr-blue cursor-pointer transition-colors"
+              title="Check for updates / switch branch"
+            >
+              ↑
+            </button>
+          </div>
         )}
         <NavLink
           to="/delete"

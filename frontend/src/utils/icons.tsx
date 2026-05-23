@@ -18,6 +18,7 @@ import {
   File,
   Filter,
   Folder,
+  GitBranch,
   Info,
   Loader2,
   Lock,
@@ -65,6 +66,7 @@ export const MinusIcon = Minus;
 export const CloudIcon = Cloud;
 export const CircleIcon = Circle;
 export const LockIcon = Lock;
+export const GitBranchIcon = GitBranch;
 export const PowerIcon = Power;
 
 // Export type for icon props

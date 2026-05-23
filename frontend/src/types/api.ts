@@ -406,19 +406,50 @@ export interface VersionInfo {
 
 export interface UpdateCheckResult {
   updates_available: boolean;
-  current_commit: string;
-  remote_commit: string;
+  up_to_date: boolean;
+  current_commit: string | null;
+  remote_commit: string | null;
   commits_behind: number;
+  /** Version string from the remote pyproject.toml, e.g. "1.3.0". Null if not available. */
+  remote_version: string | null;
+  error: string | null;
+}
+
+export interface UpdateStepResult {
+  success: boolean;
+  output: string;
+  /** Human-readable label, e.g. "Downloading update" */
+  label: string;
 }
 
 export interface UpdateResult {
   success: boolean;
-  results: {
-    git_pull: { success: boolean; output: string };
-    pip_install: { success: boolean; output: string };
-    modaq_toolkit: { success: boolean; output: string };
-  };
-  message: string;
+  failed_at: string | null;
+  /** Full commit hash captured before the update, used for rollback. */
+  pre_update_commit: string | null;
+  /** Ordered list of step keys */
+  step_order: string[];
+  results: Record<string, UpdateStepResult>;
+}
+
+export interface RollbackResult {
+  success: boolean;
+  commit?: string;
+  output?: string;
+  error: string | null;
+}
+
+export interface BranchListResult {
+  current: string | null;
+  branches: string[];
+  error: string | null;
+}
+
+export interface BranchSwitchResult {
+  success: boolean;
+  branch: string;
+  output: string;
+  error: string | null;
 }
 
 export interface ConnectionTestResult {

@@ -194,26 +194,120 @@ def check_updates() -> tuple[Response, int]:
 
 @settings_bp.route("/update", methods=["POST"])
 def run_update() -> tuple[Response, int]:
-    """Run application update (git pull + pip install).
+    """Run application update (git pull + pip install + frontend build).
 
     Returns:
-        JSON response with update results
+        JSON response with update results including pre_update_commit for rollback
     """
     updater = get_updater()
     result = updater.update_application()
 
-    # Determine overall success
-    all_success = all(step["success"] for step in result.values())
+    log = get_log_service()
+    if result["success"]:
+        log.info("settings", "app_updated", "Application updated successfully")
+    else:
+        log.warning(
+            "settings",
+            "app_update_failed",
+            f"Update failed at step: {result.get('failed_at')}",
+            {"failed_at": result.get("failed_at")},
+        )
 
-    return jsonify(
-        {
-            "success": all_success,
-            "results": result,
-            "message": "Update completed successfully"
-            if all_success
-            else "Update completed with some errors",
-        }
-    ), 200
+    return jsonify(result), 200
+
+
+@settings_bp.route("/rollback", methods=["POST"])
+def rollback_update() -> tuple[Response, int]:
+    """Roll back to a previous commit.
+
+    Request body:
+        commit: Full git commit hash to roll back to
+
+    Returns:
+        JSON response with rollback result
+    """
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    data = request.get_json() or {}
+    commit = data.get("commit", "").strip()
+
+    if not commit:
+        return jsonify({"error": "commit hash required"}), 400
+
+    updater = get_updater()
+    result = updater.rollback_update(commit)
+
+    log = get_log_service()
+    if result["success"]:
+        log.info(
+            "settings",
+            "app_rolled_back",
+            f"Application rolled back to {commit[:7]}",
+            {"commit": commit},
+        )
+    else:
+        log.error(
+            "settings",
+            "rollback_failed",
+            f"Rollback to {commit[:7]} failed: {result.get('error')}",
+            {"commit": commit, "error": result.get("error")},
+        )
+
+    return jsonify(result), 200
+
+
+@settings_bp.route("/branches", methods=["GET"])
+def get_branches() -> tuple[Response, int]:
+    """Get current branch and list of all available branches.
+
+    Returns:
+        JSON response with current branch and branch list
+    """
+    updater = get_updater()
+    result = updater.get_branches()
+    return jsonify(result), 200
+
+
+@settings_bp.route("/branches/switch", methods=["POST"])
+def switch_branch() -> tuple[Response, int]:
+    """Switch to a specified git branch.
+
+    Request body:
+        branch: Name of the branch to switch to
+
+    Returns:
+        JSON response with switch result
+    """
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    data = request.get_json() or {}
+    branch = data.get("branch", "").strip()
+
+    if not branch:
+        return jsonify({"error": "branch name required"}), 400
+
+    updater = get_updater()
+    result = updater.switch_branch(branch)
+
+    log = get_log_service()
+    if result["success"]:
+        log.info(
+            "settings",
+            "branch_switch",
+            f"Switched to branch '{branch}'",
+            {"branch": branch},
+        )
+    else:
+        log.warning(
+            "settings",
+            "branch_switch",
+            f"Failed to switch to branch '{branch}': {result['error']}",
+            {"branch": branch, "error": result["error"]},
+        )
+
+    return jsonify(result), 200
 
 
 @settings_bp.route("/cache/stats", methods=["GET"])

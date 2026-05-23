@@ -7,26 +7,29 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  maxWidth?: string;
+  /** When true, disables Escape key, backdrop click, and the × button (e.g. during an update). */
+  locked?: boolean;
 }
 
-export default function Modal({ isOpen, onClose, title, children, footer }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-sm', locked = false }: ModalProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
 
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !locked) onClose();
     }
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, locked]);
 
   if (!isOpen) return null;
 
   function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === backdropRef.current) onClose();
+    if (!locked && e.target === backdropRef.current) onClose();
   }
 
   return (
@@ -39,14 +42,15 @@ export default function Modal({ isOpen, onClose, title, children, footer }: Moda
         onClick={handleBackdropClick}
         data-testid="modal-backdrop"
       >
-        <div className="bg-white rounded-lg shadow-xl max-w-sm w-full mx-4 overflow-hidden">
+        <div className={`bg-white rounded-lg shadow-xl ${maxWidth} w-full mx-4 overflow-hidden`}>
           {/* Header */}
           <div className="bg-nlr-blue text-white px-6 py-4 flex justify-between items-center">
             <h2 className="text-lg font-semibold">{title}</h2>
             <button
               type="button"
-              onClick={onClose}
-              className="text-white hover:text-gray-200"
+              onClick={locked ? undefined : onClose}
+              disabled={locked}
+              className={`text-white ${locked ? 'opacity-30 cursor-not-allowed' : 'hover:text-gray-200'}`}
               aria-label="Close modal"
             >
               <XIcon className="w-6 h-6" />

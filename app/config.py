@@ -260,6 +260,25 @@ class AppUpdater:
     def __init__(self) -> None:
         self.base_dir = BASE_DIR
 
+    def _get_remote_version(self) -> str | None:
+        """Read the version from the remote pyproject.toml (FETCH_HEAD)."""
+        try:
+            result = subprocess.run(
+                ["git", "show", "FETCH_HEAD:pyproject.toml"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            for line in result.stdout.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("version") and "=" in stripped:
+                    raw = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+                    return raw
+        except Exception:
+            pass
+        return None
+
     def check_for_updates(self) -> dict[str, Any]:
         """Check if there are updates available from git remote."""
         try:
@@ -271,8 +290,22 @@ class AppUpdater:
                 check=True,
             )
 
+            # Check how many commits behind we are
+            behind_result = subprocess.run(
+                ["git", "rev-list", "--count", "HEAD..@{u}"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+            )
+            commits_behind = 0
+            if behind_result.returncode == 0:
+                try:
+                    commits_behind = int(behind_result.stdout.strip())
+                except ValueError:
+                    commits_behind = 0
+
             # Check if we're behind remote
-            result = subprocess.run(
+            status_result = subprocess.run(
                 ["git", "status", "-uno"],
                 cwd=self.base_dir,
                 capture_output=True,
@@ -280,8 +313,8 @@ class AppUpdater:
                 check=True,
             )
 
-            behind = "Your branch is behind" in result.stdout
-            up_to_date = "Your branch is up to date" in result.stdout
+            behind = commits_behind > 0
+            up_to_date = "Your branch is up to date" in status_result.stdout
 
             # Get current commit
             current = subprocess.run(
@@ -292,10 +325,29 @@ class AppUpdater:
                 check=True,
             )
 
+            # Get remote commit
+            remote_commit_result = subprocess.run(
+                ["git", "rev-parse", "--short", "@{u}"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+            )
+            remote_commit = (
+                remote_commit_result.stdout.strip()
+                if remote_commit_result.returncode == 0
+                else None
+            )
+
+            # Try to read the remote version from pyproject.toml
+            remote_version = self._get_remote_version() if behind else None
+
             return {
                 "updates_available": behind,
                 "up_to_date": up_to_date,
                 "current_commit": current.stdout.strip(),
+                "remote_commit": remote_commit,
+                "commits_behind": commits_behind,
+                "remote_version": remote_version,
                 "error": None,
             }
         except subprocess.CalledProcessError as e:
@@ -303,17 +355,44 @@ class AppUpdater:
                 "updates_available": False,
                 "up_to_date": False,
                 "current_commit": None,
+                "remote_commit": None,
+                "commits_behind": 0,
+                "remote_version": None,
                 "error": str(e),
             }
 
+    # Human-readable labels for each update step
+    STEP_LABELS: dict[str, str] = {
+        "git_pull": "Downloading update",
+        "pip_install": "Installing Python packages",
+        "modaq_toolkit": "Updating data tools",
+        "npm_install": "Installing app dependencies",
+        "frontend_build": "Rebuilding interface",
+    }
+
     def update_application(self) -> dict[str, Any]:
-        """Pull latest changes from git and reinstall dependencies."""
+        """Pull latest changes from git and reinstall dependencies.
+
+        Saves the pre-update commit so the caller can offer rollback on failure.
+        """
+        # Capture the current commit so we can roll back if needed
+        pre_update_commit: str | None = None
+        try:
+            cp = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            pre_update_commit = cp.stdout.strip()
+        except subprocess.CalledProcessError:
+            pass
+
+        step_order = ["git_pull", "pip_install", "modaq_toolkit", "npm_install", "frontend_build"]
         results: dict[str, Any] = {
-            "git_pull": {"success": False, "output": ""},
-            "pip_install": {"success": False, "output": ""},
-            "modaq_toolkit": {"success": False, "output": ""},
-            "npm_install": {"success": False, "output": ""},
-            "frontend_build": {"success": False, "output": ""},
+            name: {"success": False, "output": "", "label": self.STEP_LABELS.get(name, name)}
+            for name in step_order
         }
 
         frontend_dir = str(self.base_dir / "frontend")
@@ -342,6 +421,7 @@ class AppUpdater:
             ("frontend_build", ["npm", "run", "build"], frontend_dir),
         ]
 
+        failed_at: str | None = None
         for step_name, cmd, cwd in steps:
             try:
                 result = subprocess.run(
@@ -354,15 +434,137 @@ class AppUpdater:
                 results[step_name] = {
                     "success": True,
                     "output": result.stdout + result.stderr,
+                    "label": self.STEP_LABELS.get(step_name, step_name),
                 }
             except subprocess.CalledProcessError as e:
                 results[step_name] = {
                     "success": False,
-                    "output": e.stdout + e.stderr if e.stdout else str(e),
+                    "output": e.stdout + e.stderr if (e.stdout or e.stderr) else str(e),
+                    "label": self.STEP_LABELS.get(step_name, step_name),
                 }
+                failed_at = step_name
                 break
 
-        return results
+        all_success = failed_at is None
+        return {
+            "results": results,
+            "step_order": step_order,
+            "success": all_success,
+            "failed_at": failed_at,
+            "pre_update_commit": pre_update_commit,
+        }
+
+    def rollback_update(self, commit: str) -> dict[str, Any]:
+        """Roll back to a specific git commit and rebuild the frontend."""
+        try:
+            # Hard-reset to the saved commit
+            subprocess.run(
+                ["git", "reset", "--hard", commit],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            return {
+                "success": False,
+                "output": e.stdout + e.stderr if (e.stdout or e.stderr) else str(e),
+                "error": "Failed to reset git repository",
+            }
+
+        # Rebuild the frontend so the rolled-back version is served correctly
+        frontend_dir = str(self.base_dir / "frontend")
+        build_output = ""
+        try:
+            result = subprocess.run(
+                ["npm", "run", "build"],
+                cwd=frontend_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            build_output = result.stdout + result.stderr
+        except subprocess.CalledProcessError as e:
+            build_output = e.stdout + e.stderr if (e.stdout or e.stderr) else str(e)
+
+        return {
+            "success": True,
+            "commit": commit,
+            "output": build_output,
+            "error": None,
+        }
+
+    def get_branches(self) -> dict[str, Any]:
+        """Get current branch and list of all local and remote branches."""
+        try:
+            current = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            local = subprocess.run(
+                ["git", "branch", "--format=%(refname:short)"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            remote = subprocess.run(
+                ["git", "branch", "-r", "--format=%(refname:short)"],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            local_branches = [b.strip() for b in local.stdout.splitlines() if b.strip()]
+            # Strip "origin/" prefix and de-duplicate with local branches
+            remote_branches = [
+                b.strip().removeprefix("origin/")
+                for b in remote.stdout.splitlines()
+                if b.strip() and "HEAD" not in b and b.strip() != "origin"
+            ]
+            all_branches = sorted(set(local_branches + remote_branches))
+
+            return {
+                "current": current.stdout.strip(),
+                "branches": all_branches,
+                "error": None,
+            }
+        except subprocess.CalledProcessError as e:
+            return {
+                "current": None,
+                "branches": [],
+                "error": str(e),
+            }
+
+    def switch_branch(self, branch: str) -> dict[str, Any]:
+        """Switch to the specified git branch."""
+        try:
+            result = subprocess.run(
+                ["git", "checkout", branch],
+                cwd=self.base_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return {
+                "success": True,
+                "branch": branch,
+                "output": result.stdout + result.stderr,
+                "error": None,
+            }
+        except subprocess.CalledProcessError as e:
+            return {
+                "success": False,
+                "branch": branch,
+                "output": e.stdout + e.stderr if e.stdout or e.stderr else "",
+                "error": str(e),
+            }
 
     def get_version_info(self) -> dict[str, Any]:
         """Get current version information."""
