@@ -26,31 +26,23 @@ export default function Footer() {
           <div className="flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center gap-6 mb-4 md:mb-0">
               <a
-                href="https://www.allianceforsustainableenergy.org/"
+                href="https://www.alliance-for-energy-innovation.org/"
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 <img
-                  src="/images/alliance-logo_black.svg"
-                  alt="Alliance for Energy Innovation"
-                  className="h-8"
+                  src="/images/alliance-for-energy-innovation-fy26-logo-black.svg"
+                  alt="Alliance for Energy Innovation, LLC"
+                  className="h-12"
                 />
               </a>
-              <a
-                href="https://www.energy.gov"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <img
-                  src="/images/doe-logo.svg"
-                  alt="U.S. Department of Energy"
-                  className="h-10"
-                />
+              <a href="https://www.energy.gov" target="_blank" rel="noopener noreferrer">
+                <img src="/images/doe-logo.svg" alt="U.S. Department of Energy" className="h-10" />
               </a>
             </div>
             <p className="nlr-attr text-center md:text-right max-w-md flex-grow">
-              The National Laboratory of the Rockies is a national laboratory of the
-              U.S. Department of Energy, Office of Critical Minerals and Energy Innovation.
+              The National Laboratory of the Rockies is a national laboratory of the U.S. Department
+              of Energy, Office of Critical Minerals and Energy Innovation.
             </p>
           </div>
         </div>

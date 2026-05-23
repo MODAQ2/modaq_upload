@@ -7,7 +7,7 @@
  * - Completed steps are clickable (go back) when not in active operation.
  */
 
-import { CheckIcon } from "../../utils/icons.tsx";
+import { CheckIcon } from '../../utils/icons.tsx';
 
 interface StepDef {
   number: number;
@@ -34,8 +34,8 @@ export default function Stepper({
   onStepClick,
   isOperating = false,
   maxClickableStep = 2,
-  ariaLabel = "Progress steps",
-  testIdPrefix = "step",
+  ariaLabel = 'Progress steps',
+  testIdPrefix = 'step',
 }: StepperProps) {
   return (
     <nav className="flex items-center justify-center mb-8" aria-label={ariaLabel}>
@@ -45,8 +45,7 @@ export default function Stepper({
         const isFuture = step.number > currentStep;
 
         // Only allow clicking completed steps up to maxClickableStep while not operating.
-        const canClick =
-          isDone && !isOperating && step.number <= maxClickableStep && !!onStepClick;
+        const canClick = isDone && !isOperating && step.number <= maxClickableStep && !!onStepClick;
 
         function handleClick() {
           if (canClick) onStepClick(step.number);
@@ -54,14 +53,14 @@ export default function Stepper({
 
         // Circle styling
         let circleClass =
-          "w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold transition-colors";
+          'w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold transition-colors';
         if (isDone) {
-          circleClass += " bg-green-700 text-white";
-          if (canClick) circleClass += " cursor-pointer hover:bg-green-800";
+          circleClass += ' bg-green-700 text-white';
+          if (canClick) circleClass += ' cursor-pointer hover:bg-green-800';
         } else if (isActive) {
-          circleClass += " bg-nlr-blue text-white";
+          circleClass += ' bg-nlr-blue text-white';
         } else {
-          circleClass += " bg-gray-300 text-gray-500";
+          circleClass += ' bg-gray-300 text-gray-500';
         }
 
         // Connector line between steps
@@ -75,20 +74,20 @@ export default function Stepper({
                 className={circleClass}
                 onClick={handleClick}
                 disabled={!canClick}
-                aria-current={isActive ? "step" : undefined}
-                aria-label={`Step ${step.number}: ${step.label}${isDone ? " (completed)" : ""}${isActive ? " (current)" : ""}`}
+                aria-current={isActive ? 'step' : undefined}
+                aria-label={`Step ${step.number}: ${step.label}${isDone ? ' (completed)' : ''}${isActive ? ' (current)' : ''}`}
                 data-testid={`${testIdPrefix}-${step.number}`}
               >
-                {isDone ? <CheckIcon className="w-5 h-5" data-testid="checkmark-icon" /> : step.number}
+                {isDone ? (
+                  <CheckIcon className="w-5 h-5" data-testid="checkmark-icon" />
+                ) : (
+                  step.number
+                )}
               </button>
               <span
                 className={`mt-1.5 text-xs font-medium ${
-                  isDone
-                    ? "text-green-800"
-                    : isActive
-                      ? "text-nlr-blue"
-                      : "text-gray-400"
-                }${isFuture ? "" : ""}`}
+                  isDone ? 'text-green-800' : isActive ? 'text-nlr-blue' : 'text-gray-400'
+                }${isFuture ? '' : ''}`}
               >
                 {step.label}
               </span>
@@ -96,7 +95,7 @@ export default function Stepper({
             {showConnector && (
               <div
                 className={`w-16 sm:w-24 h-0.5 mx-2 mb-5 ${
-                  step.number < currentStep ? "bg-green-700" : "bg-gray-300"
+                  step.number < currentStep ? 'bg-green-700' : 'bg-gray-300'
                 }`}
               />
             )}

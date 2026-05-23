@@ -4,11 +4,7 @@ interface ProgressBarProps {
   color?: string;
 }
 
-export default function ProgressBar({
-  percent,
-  label,
-  color = "bg-nlr-blue",
-}: ProgressBarProps) {
+export default function ProgressBar({ percent, label, color = 'bg-nlr-blue' }: ProgressBarProps) {
   const clampedPercent = Math.min(100, Math.max(0, percent));
 
   return (

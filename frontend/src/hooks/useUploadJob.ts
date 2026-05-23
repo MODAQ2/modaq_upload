@@ -7,10 +7,10 @@
  * only in the terminal event and is stored in uploadStore.completedJob.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { apiPost } from "../api/client.ts";
-import { useUploadStore } from "../stores/uploadStore.ts";
+import { apiGet, apiPost } from '../api/client.ts';
+import { useUploadStore } from '../stores/uploadStore.ts';
 import type {
   AnalysisCompleteEvent,
   AnalysisProgressEvent,
@@ -20,10 +20,39 @@ import type {
   BatchStartedEvent,
   FileUploadState,
   JobCompletedEvent,
+  JobResultsPage,
   UploadJob,
   UploadJobProgress,
-} from "../types/api.ts";
-import { useSSE } from "./useSSE.ts";
+} from '../types/api.ts';
+import { useJobProgress } from './useJobProgress.ts';
+
+const RESULTS_PAGE_SIZE = 500;
+
+/**
+ * Lazily fetch every page of /api/upload/results/<job_id> in sequence.
+ *
+ * Used at terminal for large jobs, where the SSE summary intentionally
+ * omits the per-file array. We could parallelize but per_page=500 means
+ * just ~20 round-trips for a 10k-file job, and serial preserves order.
+ */
+async function fetchAllJobResults(jobId: string): Promise<FileUploadState[]> {
+  const all: FileUploadState[] = [];
+  let page = 1;
+  // Defensive cap: ~1M files at per_page=500. Beyond that something has
+  // gone wrong upstream and we shouldn't keep hammering the API.
+  const MAX_PAGES = 2000;
+  while (page <= MAX_PAGES) {
+    const res = await apiGet<JobResultsPage>(`/api/upload/results/${jobId}`, {
+      page: String(page),
+      per_page: String(RESULTS_PAGE_SIZE),
+    });
+    if (!res.files.length) break;
+    all.push(...res.files);
+    if (!res.pagination?.has_next) break;
+    page += 1;
+  }
+  return all;
+}
 
 interface StatusCounts {
   uploaded: number;
@@ -39,10 +68,7 @@ interface UseUploadJobOptions {
 }
 
 interface UseUploadJobResult {
-  startUpload: (
-    filePaths: string[],
-    skipDuplicates?: boolean,
-  ) => Promise<void>;
+  startUpload: (filePaths: string[], skipDuplicates?: boolean) => Promise<void>;
   cancelUpload: () => Promise<void>;
   filesProcessed: number;
   totalFiles: number;
@@ -68,13 +94,15 @@ type SSEEvent =
   | UploadJob;
 
 /** Type guard: does this look like a progress dict (lightweight, during upload)? */
-function isProgressDict(data: Record<string, unknown>): data is UploadJobProgress & Record<string, unknown> {
-  return "job_id" in data && "total_files" in data && !("total_bytes" in data) && !("type" in data);
+function isProgressDict(
+  data: Record<string, unknown>,
+): data is UploadJobProgress & Record<string, unknown> {
+  return 'job_id' in data && 'total_files' in data && !('total_bytes' in data) && !('type' in data);
 }
 
 /** Type guard: does this look like a full UploadJob dict (terminal)? */
 function isFullJobDict(data: Record<string, unknown>): data is UploadJob & Record<string, unknown> {
-  return "job_id" in data && "total_bytes" in data && !("type" in data);
+  return 'job_id' in data && 'total_bytes' in data && !('type' in data);
 }
 
 export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobResult {
@@ -90,9 +118,8 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
   });
   const [progressPercent, setProgressPercent] = useState(0);
   const [eta, setEta] = useState<number | null>(null);
-  const [uploadedBytesFormatted, setUploadedBytesFormatted] = useState("");
-  const [totalBytesFormatted, setTotalBytesFormatted] = useState("");
-  const [isCancelling, setIsCancelling] = useState(false);
+  const [uploadedBytesFormatted, setUploadedBytesFormatted] = useState('');
+  const [totalBytesFormatted, setTotalBytesFormatted] = useState('');
 
   const {
     setUploadJobId,
@@ -117,23 +144,18 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
   const handleMessage = useCallback(
     (raw: unknown) => {
       const data = raw as SSEEvent & Record<string, unknown>;
-      if (!data || typeof data !== "object") return;
+      if (!data || typeof data !== 'object') return;
 
       // Typed events (analysis phase)
-      if ("type" in data) {
+      if ('type' in data) {
         switch (data.type) {
-          case "analysis_progress": {
+          case 'analysis_progress': {
             const evt = data as AnalysisProgressEvent;
             setTotalFiles(evt.total_files);
             // Show the file being analyzed as an active file.
             setActiveFiles((prev) => {
-              const filtered = prev.filter(
-                (f) => f.local_path !== evt.file.local_path,
-              );
-              if (
-                evt.file.status === "analyzing" ||
-                evt.file.status === "uploading"
-              ) {
+              const filtered = prev.filter((f) => f.local_path !== evt.file.local_path);
+              if (evt.file.status === 'analyzing' || evt.file.status === 'uploading') {
                 return [...filtered, evt.file];
               }
               return filtered;
@@ -143,7 +165,7 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
             break;
           }
 
-          case "analysis_complete": {
+          case 'analysis_complete': {
             const evt = data as AnalysisCompleteEvent;
             setTotalFiles(evt.job.total_files);
             if (!evt.auto_upload) {
@@ -158,12 +180,12 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
             break;
           }
 
-          case "auto_upload_starting":
+          case 'auto_upload_starting':
             // Upload phase beginning — keep running, active files will
             // arrive via progress dicts.
             break;
 
-          case "batch_started": {
+          case 'batch_started': {
             const evt = data as BatchStartedEvent;
             setCurrentBatch(evt.batch_id);
             setTotalBatches(evt.total_batches);
@@ -172,7 +194,7 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
               batch_id: evt.batch_id,
               total_batches: evt.total_batches,
               files_in_batch: evt.files_in_batch,
-              status: "processing",
+              status: 'processing',
               files_processed: 0,
               files_uploaded: 0,
               files_failed: 0,
@@ -180,12 +202,12 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
               started_at: new Date().toISOString(),
               completed_at: null,
               duration_seconds: null,
-              error_message: "",
+              error_message: '',
             });
             break;
           }
 
-          case "batch_progress": {
+          case 'batch_progress': {
             const evt = data as BatchProgressEvent;
             setCurrentBatch(evt.batch_id);
             // Limit active files to 8 items max
@@ -211,12 +233,12 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
             break;
           }
 
-          case "batch_completed": {
+          case 'batch_completed': {
             const evt = data as BatchCompletedEvent;
             if (batchState) {
               setBatchState({
                 ...batchState,
-                status: "completed",
+                status: 'completed',
                 files_uploaded: evt.files_uploaded,
                 files_failed: evt.files_failed,
                 completed_at: new Date().toISOString(),
@@ -225,10 +247,9 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
             break;
           }
 
-          case "job_completed": {
+          case 'job_completed': {
             // Job completed event - reset batch state
             setIsRunning(false);
-            setIsCancelling(false);
             setJobId(null);
             setIsBatchProcessing(false);
             setCurrentBatch(null);
@@ -271,14 +292,25 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
         }
 
         // Terminal statuses in progress dict
-        if (
-          p.status === "completed" ||
-          p.status === "failed" ||
-          p.status === "cancelled"
-        ) {
+        if (p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled') {
           setIsRunning(false);
-          setIsCancelling(false);
           setJobId(null);
+
+          // Large-job terminal: the summary event intentionally omits the
+          // per-file array. Fetch paginated results from SQLite so the
+          // summary table can render without sending 10k rows over SSE.
+          if (p.terminal) {
+            const jobIdToFetch = p.job_id;
+            fetchAllJobResults(jobIdToFetch)
+              .then((files) => {
+                onCompletionRef.current?.(files);
+              })
+              .catch(() => {
+                // Best-effort — summary table will simply lack the per-file
+                // detail rows. Aggregate counters from the summary event
+                // are already in place.
+              });
+          }
         }
         return;
       }
@@ -302,7 +334,6 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
         // Notify unified table with all completion data
         onCompletionRef.current?.(job.files);
         setIsRunning(false);
-        setIsCancelling(false);
         setJobId(null);
         return;
       }
@@ -322,16 +353,15 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
     [jobId, isRunning],
   );
 
-  useSSE({
-    url: sseUrl,
+  const cancelUrl = useMemo(() => (jobId ? `/api/upload/cancel/${jobId}` : null), [jobId]);
+
+  const { isCancelling, cancel: cancelUpload } = useJobProgress({
+    sseUrl,
+    cancelUrl,
     onMessage: handleMessage,
-    onError: () => {
-      // Stream closed — if we're still "running" the server ended it.
-      if (isRunning) {
-        setIsRunning(false);
-        setIsCancelling(false);
-        setJobId(null);
-      }
+    onForceClose: () => {
+      setIsRunning(false);
+      setJobId(null);
     },
   });
 
@@ -345,14 +375,13 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
       setStatusCounts({ uploaded: 0, skipped: 0, failed: 0 });
       setProgressPercent(0);
       setEta(null);
-      setUploadedBytesFormatted("");
-      setTotalBytesFormatted("");
-      setIsCancelling(false);
+      setUploadedBytesFormatted('');
+      setTotalBytesFormatted('');
       setIsRunning(true);
 
       try {
         const res = await apiPost<{ job_id: string; total_files: number }>(
-          "/api/upload/bulk-analyze",
+          '/api/upload/bulk-analyze',
           {
             file_paths: filePaths,
             auto_upload: true,
@@ -368,21 +397,6 @@ export function useUploadJob(options: UseUploadJobOptions = {}): UseUploadJobRes
     },
     [setUploadJobId],
   );
-
-  /** Cancel the current upload job. SSE terminal event handles cleanup. */
-  const cancelUpload = useCallback(async () => {
-    const currentJobId = useUploadStore.getState().uploadJobId;
-    if (!currentJobId) return;
-    setIsCancelling(true);
-    try {
-      await apiPost(`/api/upload/cancel/${currentJobId}`);
-    } catch {
-      // If the cancel request itself fails, force-close
-      setIsRunning(false);
-      setJobId(null);
-      setIsCancelling(false);
-    }
-  }, []);
 
   return {
     startUpload,

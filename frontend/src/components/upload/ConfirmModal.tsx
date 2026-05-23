@@ -5,10 +5,10 @@
  * that dynamically updates the file count.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState } from 'react';
 
-import { formatBytes } from "../../utils/format/bytes.ts";
-import Modal from "../common/Modal.tsx";
+import { formatBytes } from '../../utils/format/bytes.ts';
+import Modal from '../common/Modal.tsx';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -66,7 +66,7 @@ export default function ConfirmModal({
               bg-nlr-blue text-white hover:bg-blue-700
               disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
           >
-            Upload {filesToUpload.toLocaleString()} File{filesToUpload !== 1 ? "s" : ""}
+            Upload {filesToUpload.toLocaleString()} File{filesToUpload !== 1 ? 's' : ''}
           </button>
         </div>
       }
@@ -74,15 +74,11 @@ export default function ConfirmModal({
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4 text-center">
           <div>
-            <div className="text-2xl font-bold text-gray-900">
-              {filesToUpload.toLocaleString()}
-            </div>
+            <div className="text-2xl font-bold text-gray-900">{filesToUpload.toLocaleString()}</div>
             <div className="text-xs text-gray-500 mt-0.5">Files to Upload</div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-gray-900">
-              {formatBytes(totalSize)}
-            </div>
+            <div className="text-2xl font-bold text-gray-900">{formatBytes(totalSize)}</div>
             <div className="text-xs text-gray-500 mt-0.5">Total Size</div>
           </div>
         </div>
@@ -90,7 +86,7 @@ export default function ConfirmModal({
         {alreadyUploaded > 0 && (
           <>
             <div className="text-sm text-yellow-700 bg-yellow-50 border border-yellow-200 rounded p-2.5">
-              {alreadyUploaded.toLocaleString()} file{alreadyUploaded !== 1 ? "s" : ""} already
+              {alreadyUploaded.toLocaleString()} file{alreadyUploaded !== 1 ? 's' : ''} already
               exist in S3 and will be skipped.
             </div>
 

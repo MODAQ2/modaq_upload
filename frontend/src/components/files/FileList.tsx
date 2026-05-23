@@ -1,9 +1,9 @@
-import type { S3File, S3Folder } from "../../types/api.ts";
-import { FolderIcon, FileIcon } from "../../utils/icons.tsx";
+import type { S3File, S3Folder } from '../../types/api.ts';
+import { FileIcon, FolderIcon } from '../../utils/icons.tsx';
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
@@ -11,11 +11,11 @@ function formatBytes(bytes: number): string {
 function formatDate(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 }
 
@@ -39,6 +39,7 @@ export default function FileList({ folders, files, onNavigate }: FileListProps) 
     <div className="divide-y divide-gray-100">
       {folders.map((folder) => (
         <button
+          type="button"
           key={folder.prefix}
           onClick={() => onNavigate(folder.prefix)}
           className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 text-left transition-colors"

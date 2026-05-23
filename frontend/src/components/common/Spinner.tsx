@@ -1,8 +1,8 @@
-import { SpinnerIcon } from "../../utils/icons";
+import { SpinnerIcon } from '../../utils/icons';
 
 interface SpinnerProps {
   message?: string;
-  size?: "sm" | "md" | "lg";
+  size?: 'sm' | 'md' | 'lg';
 }
 
 const sizeMap = {
@@ -11,7 +11,7 @@ const sizeMap = {
   lg: 48,
 };
 
-export default function Spinner({ message, size = "md" }: SpinnerProps) {
+export default function Spinner({ message, size = 'md' }: SpinnerProps) {
   return (
     <div className="flex flex-col items-center gap-3">
       <SpinnerIcon

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from 'react';
 
 export interface UsePaginationResult {
   offset: number;
@@ -16,10 +16,7 @@ export function usePagination(pageSize = 100): UsePaginationResult {
   const [currentPage, setCurrentPage] = useState(1);
   const [total, setTotalRaw] = useState(0);
 
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(total / pageSize)),
-    [total, pageSize],
-  );
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
   const offset = (currentPage - 1) * pageSize;
 

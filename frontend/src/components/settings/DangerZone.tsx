@@ -1,15 +1,15 @@
-import { useState } from "react";
-import { apiPost } from "../../api/client.ts";
-import { useAppStore } from "../../stores/appStore.ts";
-import { PowerIcon } from "../../utils/icons.tsx";
+import { useState } from 'react';
+import { apiPost } from '../../api/client.ts';
+import { useAppStore } from '../../stores/appStore.ts';
+import { PowerIcon } from '../../utils/icons.tsx';
 
 const DEFAULT_SETTINGS = {
-  aws_profile: "default",
-  aws_region: "us-west-2",
-  s3_bucket: "",
-  default_upload_folder: "",
-  display_name: "",
-  log_directory: "logs",
+  aws_profile: 'default',
+  aws_region: 'us-west-2',
+  s3_bucket: '',
+  default_upload_folder: '',
+  display_name: '',
+  log_directory: 'logs',
 };
 
 export default function DangerZone() {
@@ -20,22 +20,24 @@ export default function DangerZone() {
   const [shuttingDown, setShuttingDown] = useState(false);
 
   async function handleClearCache() {
-    if (!window.confirm("Are you sure you want to clear the upload cache? This cannot be undone.")) {
+    if (
+      !window.confirm('Are you sure you want to clear the upload cache? This cannot be undone.')
+    ) {
       return;
     }
 
     setClearing(true);
     try {
       const result = await apiPost<{ success: boolean; deleted: number; message: string }>(
-        "/api/settings/cache/invalidate",
+        '/api/settings/cache/invalidate',
       );
       if (result.success) {
-        addNotification("success", `Cleared ${result.deleted} cache entries`);
+        addNotification('success', `Cleared ${result.deleted} cache entries`);
       } else {
-        addNotification("error", "Failed to clear cache");
+        addNotification('error', 'Failed to clear cache');
       }
     } catch {
-      addNotification("error", "Failed to clear cache");
+      addNotification('error', 'Failed to clear cache');
     } finally {
       setClearing(false);
     }
@@ -44,7 +46,7 @@ export default function DangerZone() {
   async function handleResetSettings() {
     if (
       !window.confirm(
-        "Are you sure you want to reset all settings to defaults? This cannot be undone.",
+        'Are you sure you want to reset all settings to defaults? This cannot be undone.',
       )
     ) {
       return;
@@ -53,9 +55,9 @@ export default function DangerZone() {
     setResetting(true);
     try {
       await updateSettings(DEFAULT_SETTINGS);
-      addNotification("info", "Settings reset to defaults");
+      addNotification('info', 'Settings reset to defaults');
     } catch {
-      addNotification("error", "Failed to reset settings");
+      addNotification('error', 'Failed to reset settings');
     } finally {
       setResetting(false);
     }
@@ -64,7 +66,7 @@ export default function DangerZone() {
   async function handleShutdown() {
     if (
       !window.confirm(
-        "Are you sure you want to shut down the server? You will need to restart it manually.",
+        'Are you sure you want to shut down the server? You will need to restart it manually.',
       )
     ) {
       return;
@@ -72,10 +74,10 @@ export default function DangerZone() {
 
     setShuttingDown(true);
     try {
-      await apiPost<{ success: boolean; message: string }>("/api/settings/shutdown");
-      addNotification("info", "Server is shutting down...");
+      await apiPost<{ success: boolean; message: string }>('/api/settings/shutdown');
+      addNotification('info', 'Server is shutting down...');
     } catch {
-      addNotification("error", "Failed to shut down server");
+      addNotification('error', 'Failed to shut down server');
       setShuttingDown(false);
     }
   }
@@ -101,7 +103,7 @@ export default function DangerZone() {
             disabled={clearing}
             className="ml-4 px-4 py-2 text-sm font-medium text-red-600 border border-red-300 rounded-md hover:bg-red-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
           >
-            {clearing ? "Clearing..." : "Clear Cache"}
+            {clearing ? 'Clearing...' : 'Clear Cache'}
           </button>
         </div>
 
@@ -118,7 +120,7 @@ export default function DangerZone() {
             disabled={resetting}
             className="ml-4 px-4 py-2 text-sm font-medium text-red-600 border border-red-300 rounded-md hover:bg-red-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
           >
-            {resetting ? "Resetting..." : "Reset Settings"}
+            {resetting ? 'Resetting...' : 'Reset Settings'}
           </button>
         </div>
 
@@ -136,7 +138,7 @@ export default function DangerZone() {
             className="ml-4 px-4 py-2 text-sm font-medium text-red-600 border border-red-300 rounded-md hover:bg-red-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap inline-flex items-center gap-1.5"
           >
             <PowerIcon className="h-4 w-4" />
-            {shuttingDown ? "Shutting down..." : "Shutdown"}
+            {shuttingDown ? 'Shutting down...' : 'Shutdown'}
           </button>
         </div>
       </div>

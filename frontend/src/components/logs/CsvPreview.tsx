@@ -1,10 +1,10 @@
-import { useCallback, useState } from "react";
-import { apiGet } from "../../api/client.ts";
-import type { CsvFileInfo, CsvPreviewResponse } from "../../types/api.ts";
+import { useCallback, useState } from 'react';
+import { apiGet } from '../../api/client.ts';
+import type { CsvFileInfo, CsvPreviewResponse } from '../../types/api.ts';
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
@@ -20,26 +20,29 @@ export default function CsvPreview({ csvFiles }: CsvPreviewProps) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const loadPreview = useCallback(async (path: string) => {
-    // Toggle off if clicking same file
-    if (previewPath === path) {
-      setPreviewPath(null);
-      setPreviewData(null);
-      return;
-    }
+  const loadPreview = useCallback(
+    async (path: string) => {
+      // Toggle off if clicking same file
+      if (previewPath === path) {
+        setPreviewPath(null);
+        setPreviewData(null);
+        return;
+      }
 
-    setPreviewPath(path);
-    setPreviewLoading(true);
-    setPreviewError(null);
-    try {
-      const data = await apiGet<CsvPreviewResponse>("/api/logs/csv-preview", { path });
-      setPreviewData(data);
-    } catch (err) {
-      setPreviewError(err instanceof Error ? err.message : "Failed to load preview");
-    } finally {
-      setPreviewLoading(false);
-    }
-  }, [previewPath]);
+      setPreviewPath(path);
+      setPreviewLoading(true);
+      setPreviewError(null);
+      try {
+        const data = await apiGet<CsvPreviewResponse>('/api/logs/csv-preview', { path });
+        setPreviewData(data);
+      } catch (err) {
+        setPreviewError(err instanceof Error ? err.message : 'Failed to load preview');
+      } finally {
+        setPreviewLoading(false);
+      }
+    },
+    [previewPath],
+  );
 
   if (csvFiles.length === 0) {
     return null;
@@ -49,11 +52,18 @@ export default function CsvPreview({ csvFiles }: CsvPreviewProps) {
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
       {/* Collapsible header */}
       <button
+        type="button"
         onClick={() => setExpanded((prev) => !prev)}
         className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
       >
         <div className="flex items-center gap-2">
-          <svg className="h-5 w-5 text-nlr-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg
+            aria-hidden="true"
+            className="h-5 w-5 text-nlr-green"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -66,17 +76,13 @@ export default function CsvPreview({ csvFiles }: CsvPreviewProps) {
           </span>
         </div>
         <svg
-          className={`w-5 h-5 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`}
+          aria-hidden="true"
+          className={`w-5 h-5 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 9l-7 7-7-7"
-          />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
@@ -88,6 +94,7 @@ export default function CsvPreview({ csvFiles }: CsvPreviewProps) {
               <div key={file.path}>
                 <div className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
                   <svg
+                    aria-hidden="true"
                     className="h-4 w-4 text-gray-400 shrink-0"
                     fill="none"
                     viewBox="0 0 24 24"
@@ -108,14 +115,15 @@ export default function CsvPreview({ csvFiles }: CsvPreviewProps) {
                   </div>
                   <div className="flex gap-2 shrink-0">
                     <button
+                      type="button"
                       onClick={() => loadPreview(file.path)}
                       className={`px-3 py-1 text-xs rounded border transition-colors ${
                         previewPath === file.path
-                          ? "bg-nlr-blue text-white border-nlr-blue"
-                          : "border-gray-300 text-gray-600 hover:bg-gray-100"
+                          ? 'bg-nlr-blue text-white border-nlr-blue'
+                          : 'border-gray-300 text-gray-600 hover:bg-gray-100'
                       }`}
                     >
-                      {previewPath === file.path ? "Hide" : "View"}
+                      {previewPath === file.path ? 'Hide' : 'View'}
                     </button>
                     <a
                       href={`/api/logs/csv-download?path=${encodeURIComponent(file.path)}`}
@@ -155,13 +163,17 @@ export default function CsvPreview({ csvFiles }: CsvPreviewProps) {
                           </thead>
                           <tbody className="divide-y divide-gray-100">
                             {previewData.rows.map((row, i) => (
-                              <tr key={i} className="hover:bg-gray-50">
+                              <tr
+                                // biome-ignore lint/suspicious/noArrayIndexKey: static list, index is stable
+                                key={i}
+                                className="hover:bg-gray-50"
+                              >
                                 {previewData.columns.map((col) => (
                                   <td
                                     key={col}
                                     className="px-3 py-2 text-gray-700 whitespace-nowrap"
                                   >
-                                    {row[col] ?? ""}
+                                    {row[col] ?? ''}
                                   </td>
                                 ))}
                               </tr>

@@ -3,15 +3,15 @@
  * Wrapper around the unified Stepper component.
  */
 
-import Stepper from "../common/Stepper.tsx";
-import type { DeleteStep } from "../../stores/deleteStore.ts";
+import type { DeleteStep } from '../../stores/deleteStore.ts';
+import Stepper from '../common/Stepper.tsx';
 
 const steps = [
-  { number: 1, label: "Select" },
-  { number: 2, label: "Review" },
-  { number: 3, label: "Confirm" },
-  { number: 4, label: "Clear" },
-  { number: 5, label: "Complete" },
+  { number: 1, label: 'Select' },
+  { number: 2, label: 'Review' },
+  { number: 3, label: 'Confirm' },
+  { number: 4, label: 'Clear' },
+  { number: 5, label: 'Complete' },
 ];
 
 interface DeleteStepperProps {

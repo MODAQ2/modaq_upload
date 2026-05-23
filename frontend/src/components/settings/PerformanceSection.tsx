@@ -10,20 +10,18 @@
  * Settings auto-save after changes (debounced for continuous inputs like sliders).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useAppStore } from "../../stores/appStore.ts";
-import type { BatchProcessingSettings, ValueSource } from "../../types/api.ts";
-import { CheckIcon, InfoIcon, SpinnerIcon } from "../../utils/icons.tsx";
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useAppStore } from '../../stores/appStore.ts';
+import type { BatchProcessingSettings, ValueSource } from '../../types/api.ts';
+import { CheckIcon, InfoIcon, SpinnerIcon } from '../../utils/icons.tsx';
 
 function SectionSourceNote({ source }: { source?: ValueSource }) {
-  if (!source || source.source === "builtin") return null;
+  if (!source || source.source === 'builtin') return null;
 
-  if (source.source === "settings_file" || source.source === "default_file") {
-    const filename = source.path?.split("/").pop() ?? source.path ?? "";
+  if (source.source === 'settings_file' || source.source === 'default_file') {
+    const filename = source.path?.split('/').pop() ?? source.path ?? '';
     const label =
-      source.source === "default_file"
-        ? `Default values — ${filename}`
-        : `Saved in ${filename}`;
+      source.source === 'default_file' ? `Default values — ${filename}` : `Saved in ${filename}`;
     return (
       <p className="text-xs text-gray-400" title={source.path}>
         {label}
@@ -47,16 +45,16 @@ function getDefaultSettings(): BatchProcessingSettings {
   };
 }
 
-type SaveStatus = "idle" | "saving" | "saved" | "error";
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 export default function PerformanceSection() {
   const { settings: appSettings, updateSettings } = useAppStore();
-  const batchSource = appSettings?.value_sources?.["batch_processing"];
+  const batchSource = appSettings?.value_sources?.batch_processing;
 
   const [settings, setSettings] = useState<BatchProcessingSettings>(
     appSettings?.batch_processing ?? getDefaultSettings(),
   );
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
 
   // Track whether a change originated from the user (vs. store sync).
   const userChangedRef = useRef(false);
@@ -67,6 +65,7 @@ export default function PerformanceSection() {
   // navigation reload), but only when there is no pending user change.
   useEffect(() => {
     if (appSettings?.batch_processing && !userChangedRef.current) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync from API response, guarded by userChangedRef
       setSettings(appSettings.batch_processing);
     }
   }, [appSettings]);
@@ -81,15 +80,15 @@ export default function PerformanceSection() {
 
   const save = useCallback(
     async (toSave: BatchProcessingSettings) => {
-      setSaveStatus("saving");
+      setSaveStatus('saving');
       try {
         await updateSettings({ batch_processing: toSave });
         userChangedRef.current = false;
-        setSaveStatus("saved");
+        setSaveStatus('saved');
         // Clear "saved" indicator after 2 seconds.
-        savedTimerRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
+        savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
       } catch {
-        setSaveStatus("error");
+        setSaveStatus('error');
       }
     },
     [updateSettings],
@@ -120,21 +119,19 @@ export default function PerformanceSection() {
       <div className="flex items-baseline justify-between mb-4">
         <div className="flex items-center gap-3">
           <h3 className="text-lg font-semibold text-nlr-text">Performance</h3>
-          {saveStatus === "saving" && (
+          {saveStatus === 'saving' && (
             <span className="flex items-center gap-1 text-xs text-gray-400">
               <SpinnerIcon className="w-3 h-3 animate-spin" />
               Saving...
             </span>
           )}
-          {saveStatus === "saved" && (
+          {saveStatus === 'saved' && (
             <span className="flex items-center gap-1 text-xs text-green-600">
               <CheckIcon className="w-3 h-3" />
               Saved
             </span>
           )}
-          {saveStatus === "error" && (
-            <span className="text-xs text-red-600">Save failed</span>
-          )}
+          {saveStatus === 'error' && <span className="text-xs text-red-600">Save failed</span>}
         </div>
         <SectionSourceNote source={batchSource} />
       </div>
@@ -146,15 +143,19 @@ export default function PerformanceSection() {
             type="checkbox"
             id="skip_mcap_validation"
             checked={settings.skip_mcap_validation}
-            onChange={(e) => handleChange("skip_mcap_validation", e.target.checked)}
+            onChange={(e) => handleChange('skip_mcap_validation', e.target.checked)}
             className="mt-1 h-4 w-4 text-nlr-blue border-gray-300 rounded focus:ring-nlr-blue"
           />
           <div className="flex-1">
-            <label htmlFor="skip_mcap_validation" className="text-sm font-medium text-gray-700 cursor-pointer">
+            <label
+              htmlFor="skip_mcap_validation"
+              className="text-sm font-medium text-gray-700 cursor-pointer"
+            >
               Skip MCAP Validation (Fast Mode)
             </label>
             <p className="text-xs text-gray-500 mt-1">
-              Extract timestamps from filenames only (3000x faster). Use when filenames are correctly formatted.
+              Extract timestamps from filenames only (3000x faster). Use when filenames are
+              correctly formatted.
             </p>
           </div>
         </div>
@@ -171,7 +172,7 @@ export default function PerformanceSection() {
             max="500"
             step="50"
             value={settings.batch_size}
-            onChange={(e) => handleChange("batch_size", Number.parseInt(e.target.value))}
+            onChange={(e) => handleChange('batch_size', Number.parseInt(e.target.value, 10))}
             className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-nlr-blue"
           />
           <p className="text-xs text-gray-500 mt-1">
@@ -185,15 +186,19 @@ export default function PerformanceSection() {
             type="checkbox"
             id="auto_tune_workers"
             checked={settings.auto_tune_workers}
-            onChange={(e) => handleChange("auto_tune_workers", e.target.checked)}
+            onChange={(e) => handleChange('auto_tune_workers', e.target.checked)}
             className="mt-1 h-4 w-4 text-nlr-blue border-gray-300 rounded focus:ring-nlr-blue"
           />
           <div className="flex-1">
-            <label htmlFor="auto_tune_workers" className="text-sm font-medium text-gray-700 cursor-pointer">
+            <label
+              htmlFor="auto_tune_workers"
+              className="text-sm font-medium text-gray-700 cursor-pointer"
+            >
               Auto-Tune Workers
             </label>
             <p className="text-xs text-gray-500 mt-1">
-              Automatically adjust worker count based on CPU/memory utilization. Recommended for large jobs.
+              Automatically adjust worker count based on CPU/memory utilization. Recommended for
+              large jobs.
             </p>
           </div>
         </div>
@@ -209,17 +214,21 @@ export default function PerformanceSection() {
             min="2"
             max="16"
             value={settings.max_workers}
-            onChange={(e) => handleChange("max_workers", Number.parseInt(e.target.value))}
+            onChange={(e) => handleChange('max_workers', Number.parseInt(e.target.value, 10))}
             className="w-32 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-nlr-blue"
           />
           <p className="text-xs text-gray-500 mt-1">
-            Maximum concurrent workers (2-16). Higher values increase throughput but use more resources.
+            Maximum concurrent workers (2-16). Higher values increase throughput but use more
+            resources.
           </p>
         </div>
 
         {/* Large Job Threshold */}
         <div>
-          <label htmlFor="large_job_threshold" className="block text-sm font-medium text-gray-700 mb-2">
+          <label
+            htmlFor="large_job_threshold"
+            className="block text-sm font-medium text-gray-700 mb-2"
+          >
             Large Job Threshold
           </label>
           <input
@@ -229,7 +238,9 @@ export default function PerformanceSection() {
             max="10000"
             step="100"
             value={settings.large_job_threshold}
-            onChange={(e) => handleChange("large_job_threshold", Number.parseInt(e.target.value))}
+            onChange={(e) =>
+              handleChange('large_job_threshold', Number.parseInt(e.target.value, 10))
+            }
             className="w-32 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-nlr-blue"
           />
           <p className="text-xs text-gray-500 mt-1">

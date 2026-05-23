@@ -2,8 +2,8 @@
  * Confirmation modal shown when the user tries to cancel a folder scan.
  */
 
-import Modal from "../common/Modal.tsx";
-import { WarningIcon } from "../../utils/icons.tsx";
+import { WarningIcon } from '../../utils/icons.tsx';
+import Modal from '../common/Modal.tsx';
 
 interface CancelScanModalProps {
   isOpen: boolean;
@@ -49,8 +49,8 @@ export default function CancelScanModal({
           <WarningIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div className="text-sm text-amber-800">
             <p>
-              Scanning has found <strong>{filesFound}</strong> file{filesFound !== 1 ? "s" : ""} in{" "}
-              <strong>{foldersScanned}</strong> folder{foldersScanned !== 1 ? "s" : ""} so far.
+              Scanning has found <strong>{filesFound}</strong> file{filesFound !== 1 ? 's' : ''} in{' '}
+              <strong>{foldersScanned}</strong> folder{foldersScanned !== 1 ? 's' : ''} so far.
             </p>
             <p className="mt-2 text-amber-700">
               Cancelling will stop the scan and you'll need to start over if you want to continue.

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { apiGet, apiPost } from "../../api/client.ts";
-import { useAppStore } from "../../stores/appStore.ts";
-import type { CacheStats, CacheSyncResult } from "../../types/api.ts";
+import { useCallback, useEffect, useState } from 'react';
+import { apiGet, apiPost } from '../../api/client.ts';
+import { useAppStore } from '../../stores/appStore.ts';
+import type { CacheStats, CacheSyncResult } from '../../types/api.ts';
 
 export default function CacheSection() {
   const { addNotification } = useAppStore();
@@ -11,37 +11,36 @@ export default function CacheSection() {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<CacheSyncResult | null>(null);
 
-  async function loadStats() {
+  const loadStats = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiGet<CacheStats>("/api/settings/cache/stats");
+      const data = await apiGet<CacheStats>('/api/settings/cache/stats');
       setStats(data);
     } catch {
-      addNotification("error", "Failed to load cache statistics");
+      addNotification('error', 'Failed to load cache statistics');
     } finally {
       setLoading(false);
     }
-  }
+  }, [addNotification]);
 
   useEffect(() => {
-    loadStats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void loadStats();
+  }, [loadStats]);
 
   async function handleSync() {
     setSyncing(true);
     setSyncResult(null);
     try {
-      const result = await apiPost<CacheSyncResult>("/api/settings/cache/sync");
+      const result = await apiPost<CacheSyncResult>('/api/settings/cache/sync');
       setSyncResult(result);
       if (result.success) {
-        addNotification("success", "Cache synced with AWS");
-        loadStats();
+        addNotification('success', 'Cache synced with AWS');
+        void loadStats();
       } else {
-        addNotification("error", result.error ?? "Cache sync failed");
+        addNotification('error', result.error ?? 'Cache sync failed');
       }
     } catch {
-      addNotification("error", "Failed to sync cache");
+      addNotification('error', 'Failed to sync cache');
     } finally {
       setSyncing(false);
     }
@@ -75,8 +74,11 @@ export default function CacheSection() {
           </div>
           <div className="bg-gray-50 rounded-md p-3">
             <div className="text-xs text-gray-500 uppercase tracking-wide">Bucket</div>
-            <div className="text-sm font-mono text-nlr-text mt-1 truncate" title={stats.stats.bucket}>
-              {stats.stats.bucket || "-"}
+            <div
+              className="text-sm font-mono text-nlr-text mt-1 truncate"
+              title={stats.stats.bucket}
+            >
+              {stats.stats.bucket || '-'}
             </div>
           </div>
         </div>
@@ -87,8 +89,8 @@ export default function CacheSection() {
       {/* Sync result */}
       {syncResult?.success && (
         <div className="mb-4 p-3 rounded-md text-sm bg-green-50 text-green-800 border border-green-200">
-          Synced: {syncResult.files_in_s3?.toLocaleString()} files in S3,{" "}
-          {syncResult.files_updated?.toLocaleString()} updated,{" "}
+          Synced: {syncResult.files_in_s3?.toLocaleString()} files in S3,{' '}
+          {syncResult.files_updated?.toLocaleString()} updated,{' '}
           {syncResult.files_removed?.toLocaleString()} removed
         </div>
       )}
@@ -99,7 +101,7 @@ export default function CacheSection() {
         disabled={syncing}
         className="px-4 py-2 text-sm font-medium text-nlr-blue border border-nlr-blue rounded-md hover:bg-nlr-blue hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        {syncing ? "Syncing..." : "Sync with AWS"}
+        {syncing ? 'Syncing...' : 'Sync with AWS'}
       </button>
     </div>
   );

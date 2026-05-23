@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { apiGet } from "../../api/client.ts";
-import type { UploadStatsResponse } from "../../types/api.ts";
-import StatCard from "../common/StatCard.tsx";
+import { useEffect, useState } from 'react';
+import { apiGet } from '../../api/client.ts';
+import type { UploadStatsResponse } from '../../types/api.ts';
+import StatCard from '../common/StatCard.tsx';
 
 interface UploadStatsBarProps {
   onDataLoaded?: (data: UploadStatsResponse) => void;
@@ -14,11 +14,11 @@ export default function UploadStatsBar({ onDataLoaded }: UploadStatsBarProps) {
   useEffect(() => {
     async function fetchStats() {
       try {
-        const data = await apiGet<UploadStatsResponse>("/api/logs/upload-stats");
+        const data = await apiGet<UploadStatsResponse>('/api/logs/upload-stats');
         setStats(data);
         onDataLoaded?.(data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load upload stats");
+        setError(err instanceof Error ? err.message : 'Failed to load upload stats');
       }
     }
     void fetchStats();
@@ -36,7 +36,11 @@ export default function UploadStatsBar({ onDataLoaded }: UploadStatsBarProps) {
     return (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="bg-white rounded-lg shadow-sm border-l-4 border-gray-200 p-4 animate-pulse">
+          <div
+            // biome-ignore lint/suspicious/noArrayIndexKey: static list, index is stable
+            key={i}
+            className="bg-white rounded-lg shadow-sm border-l-4 border-gray-200 p-4 animate-pulse"
+          >
             <div className="h-8 bg-gray-200 rounded w-16 mb-2" />
             <div className="h-4 bg-gray-100 rounded w-24" />
           </div>

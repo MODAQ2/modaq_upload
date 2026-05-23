@@ -1,18 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiGet } from "../../api/client.ts";
-import { usePagination } from "../../hooks/usePagination.ts";
-import type { LogEntriesResponse, LogEntry } from "../../types/api.ts";
-import SortableHeader from "../common/SortableHeader.tsx";
-import type { LogFilters } from "./FilterBar.tsx";
+import { useCallback, useEffect, useState } from 'react';
+import { apiGet } from '../../api/client.ts';
+import { usePagination } from '../../hooks/usePagination.ts';
+import type { LogEntriesResponse, LogEntry } from '../../types/api.ts';
+import SortableHeader from '../common/SortableHeader.tsx';
+import type { LogFilters } from './FilterBar.tsx';
 
 const LEVEL_BADGES: Record<string, string> = {
-  INFO: "bg-blue-100 text-blue-800",
-  WARNING: "bg-yellow-100 text-yellow-800",
-  ERROR: "bg-red-100 text-red-800",
+  INFO: 'bg-blue-100 text-blue-800',
+  WARNING: 'bg-yellow-100 text-yellow-800',
+  ERROR: 'bg-red-100 text-red-800',
 };
 
 function LevelBadge({ level }: { level: string }) {
-  const classes = LEVEL_BADGES[level] ?? "bg-gray-100 text-gray-800";
+  const classes = LEVEL_BADGES[level] ?? 'bg-gray-100 text-gray-800';
   return (
     <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${classes}`}>
       {level}
@@ -23,15 +23,15 @@ function LevelBadge({ level }: { level: string }) {
 function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
   });
 }
 
-type SortColumn = "timestamp" | "level" | "category" | "event";
+type SortColumn = 'timestamp' | 'level' | 'category' | 'event';
 
 interface LogTableProps {
   filters: LogFilters;
@@ -42,7 +42,7 @@ export default function LogTable({ filters }: LogTableProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [sortColumn, setSortColumn] = useState<SortColumn>("timestamp");
+  const [sortColumn, setSortColumn] = useState<SortColumn>('timestamp');
   const [ascending, setAscending] = useState(false);
 
   const pagination = usePagination(50);
@@ -54,7 +54,7 @@ export default function LogTable({ filters }: LogTableProps) {
         setAscending((prev) => !prev);
       } else {
         setSortColumn(column);
-        setAscending(column === "timestamp" ? false : true);
+        setAscending(column !== 'timestamp');
       }
     },
     [sortColumn],
@@ -73,11 +73,11 @@ export default function LogTable({ filters }: LogTableProps) {
       if (filters.category) params.category = filters.category;
       if (filters.search) params.search = filters.search;
 
-      const data = await apiGet<LogEntriesResponse>("/api/logs/entries", params);
+      const data = await apiGet<LogEntriesResponse>('/api/logs/entries', params);
       setEntries(data.entries);
       setTotal(data.total);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load log entries");
+      setError(err instanceof Error ? err.message : 'Failed to load log entries');
     } finally {
       setLoading(false);
     }
@@ -86,7 +86,7 @@ export default function LogTable({ filters }: LogTableProps) {
   // Reset to page 1 when filters change
   useEffect(() => {
     paginationReset();
-  }, [filters.date, filters.level, filters.category, filters.search, paginationReset]);
+  }, [paginationReset]);
 
   useEffect(() => {
     void fetchEntries();
@@ -97,7 +97,7 @@ export default function LogTable({ filters }: LogTableProps) {
     const aVal = a[sortColumn];
     const bVal = b[sortColumn];
     let cmp = 0;
-    if (typeof aVal === "string" && typeof bVal === "string") {
+    if (typeof aVal === 'string' && typeof bVal === 'string') {
       cmp = aVal.localeCompare(bVal);
     }
     return ascending ? cmp : -cmp;
@@ -116,27 +116,27 @@ export default function LogTable({ filters }: LogTableProps) {
             <tr>
               <SortableHeader
                 label="Timestamp"
-                active={sortColumn === "timestamp"}
+                active={sortColumn === 'timestamp'}
                 ascending={ascending}
-                onSort={() => toggleSort("timestamp")}
+                onSort={() => toggleSort('timestamp')}
               />
               <SortableHeader
                 label="Level"
-                active={sortColumn === "level"}
+                active={sortColumn === 'level'}
                 ascending={ascending}
-                onSort={() => toggleSort("level")}
+                onSort={() => toggleSort('level')}
               />
               <SortableHeader
                 label="Category"
-                active={sortColumn === "category"}
+                active={sortColumn === 'category'}
                 ascending={ascending}
-                onSort={() => toggleSort("category")}
+                onSort={() => toggleSort('category')}
               />
               <SortableHeader
                 label="Event"
-                active={sortColumn === "event"}
+                active={sortColumn === 'event'}
                 ascending={ascending}
-                onSort={() => toggleSort("event")}
+                onSort={() => toggleSort('event')}
               />
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Message
@@ -184,6 +184,7 @@ export default function LogTable({ filters }: LogTableProps) {
           </span>
           <div className="flex gap-2">
             <button
+              type="button"
               onClick={pagination.prevPage}
               disabled={pagination.currentPage === 1}
               className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -191,6 +192,7 @@ export default function LogTable({ filters }: LogTableProps) {
               Previous
             </button>
             <button
+              type="button"
               onClick={pagination.nextPage}
               disabled={pagination.currentPage === pagination.totalPages}
               className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -219,7 +221,7 @@ function LogRow({
   return (
     <>
       <tr
-        className={`hover:bg-gray-50 transition-colors ${hasMetadata ? "cursor-pointer" : ""}`}
+        className={`hover:bg-gray-50 transition-colors ${hasMetadata ? 'cursor-pointer' : ''}`}
         onClick={hasMetadata ? onToggle : undefined}
       >
         <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
@@ -235,7 +237,8 @@ function LogRow({
             <span className="truncate">{entry.message}</span>
             {hasMetadata && (
               <svg
-                className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
+                aria-hidden="true"
+                className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"

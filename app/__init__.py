@@ -15,11 +15,11 @@ _cleanup_stop_event = threading.Event()
 
 def _sse_cleanup_worker() -> None:
     """Background worker that periodically cleans up stale SSE queues."""
-    from app.routes.upload import _cleanup_old_sse_queues
+    from app.services.sse_manager import get_sse_manager
 
     while not _cleanup_stop_event.wait(timeout=300):  # Check every 5 minutes
         try:
-            removed = _cleanup_old_sse_queues()
+            removed = get_sse_manager().cleanup_old_queues()
             if removed > 0:
                 from app.services.log_service import get_log_service
 
@@ -72,6 +72,7 @@ def create_app() -> Flask:
     # Register blueprints
     from app.routes.delete import delete_bp
     from app.routes.files import files_bp
+    from app.routes.large_folder_upload import large_folder_upload_bp
     from app.routes.logs import logs_bp
     from app.routes.main import main_bp
     from app.routes.settings import settings_bp
@@ -83,6 +84,7 @@ def create_app() -> Flask:
     app.register_blueprint(settings_bp, url_prefix="/api/settings")
     app.register_blueprint(logs_bp, url_prefix="/api/logs")
     app.register_blueprint(delete_bp, url_prefix="/api/delete")
+    app.register_blueprint(large_folder_upload_bp, url_prefix="/api/large-folder-upload")
 
     # Start background SSE cleanup thread
     _start_sse_cleanup()

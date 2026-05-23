@@ -1,15 +1,15 @@
 /**
- * Hook for scanning a folder for deletable MCAP files.
+ * Hook for scanning a folder for deletable Data Files.
  *
  * Calls POST /api/delete/scan and returns scanned files
  * that match entries in the upload cache.
  */
 
-import { useCallback } from "react";
+import { useCallback } from 'react';
 
-import { apiPost } from "../api/client.ts";
-import { useDeleteStore } from "../stores/deleteStore.ts";
-import type { DeleteScanResponse } from "../types/delete.ts";
+import { apiPost } from '../api/client.ts';
+import { useDeleteStore } from '../stores/deleteStore.ts';
+import type { DeleteScanResponse } from '../types/delete.ts';
 
 interface ScanExclusions {
   subfolders: string[];
@@ -22,8 +22,7 @@ interface UseDeleteScanResult {
 }
 
 export function useDeleteScan(): UseDeleteScanResult {
-  const { isScanning, setIsScanning, setScanResults, setDeleteJobId } =
-    useDeleteStore();
+  const { isScanning, setIsScanning, setScanResults, setDeleteJobId } = useDeleteStore();
 
   const scan = useCallback(
     async (folderPath: string, exclusions?: ScanExclusions) => {
@@ -34,7 +33,7 @@ export function useDeleteScan(): UseDeleteScanResult {
           body.excluded_subfolders = exclusions.subfolders;
           body.excluded_files = exclusions.files;
         }
-        const res = await apiPost<DeleteScanResponse>("/api/delete/scan", body);
+        const res = await apiPost<DeleteScanResponse>('/api/delete/scan', body);
         setDeleteJobId(res.job_id);
         setScanResults(res.files, res.total_size, res.permission_warning);
       } finally {

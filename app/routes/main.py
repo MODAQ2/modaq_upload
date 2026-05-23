@@ -17,6 +17,7 @@ FRONTEND_DIST = os.path.join(
 @main_bp.route("/")
 @main_bp.route("/delete")
 @main_bp.route("/files")
+@main_bp.route("/large-folder-upload")
 @main_bp.route("/settings")
 @main_bp.route("/logs")
 def serve_spa() -> Response:

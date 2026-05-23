@@ -5,7 +5,6 @@ import json
 import subprocess
 import threading
 import time
-from collections import deque
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
@@ -14,20 +13,9 @@ from flask import Blueprint, Response, jsonify, request
 
 from app.config import get_settings
 from app.services.delete_manager import DeleteJob, get_delete_manager
+from app.services.sse_manager import get_sse_manager
 
 delete_bp = Blueprint("delete", __name__)
-
-# SSE client queues for delete jobs
-_sse_queues: dict[str, list[deque[dict[str, Any]]]] = {}
-_sse_lock = threading.Lock()
-
-
-def _send_sse_event(job_id: str, data: dict[str, Any]) -> None:
-    """Send an SSE event to all clients listening for a delete job."""
-    with _sse_lock:
-        queues = _sse_queues.get(job_id, [])
-        for q in queues:
-            q.append(data)
 
 
 @delete_bp.route("/scan", methods=["POST"])
@@ -109,14 +97,15 @@ def start_delete(job_id: str) -> tuple[Response, int]:
 
     def progress_callback(job: DeleteJob) -> None:
         """Send progress updates via SSE."""
+        sse_mgr = get_sse_manager()
         if job.status in ("completed", "failed", "cancelled"):
-            _send_sse_event(job.job_id, {"type": "delete_complete", **job.to_dict()})
+            sse_mgr.send_event(job.job_id, {"type": "delete_complete", **job.to_dict()})
         else:
-            _send_sse_event(job.job_id, {"type": "delete_progress", **job.to_progress_dict()})
+            sse_mgr.send_event(job.job_id, {"type": "delete_progress", **job.to_progress_dict()})
 
     def batch_callback(batch_event: dict[str, Any]) -> None:
         """Send batch-level events via SSE."""
-        _send_sse_event(job_id, batch_event)
+        get_sse_manager().send_event(job_id, batch_event)
 
     def run_delete() -> None:
         manager.start_delete_job(
@@ -146,11 +135,9 @@ def get_progress(job_id: str) -> Response:
     manager = get_delete_manager()
 
     def generate() -> Generator[str, None, None]:
-        queue: deque[dict[str, Any]] = deque()
-        with _sse_lock:
-            if job_id not in _sse_queues:
-                _sse_queues[job_id] = []
-            _sse_queues[job_id].append(queue)
+        sse_mgr = get_sse_manager()
+        queue, event = sse_mgr.register_client(job_id)
+        last_heartbeat_time = time.time()
 
         try:
             # Send initial state
@@ -162,12 +149,20 @@ def get_progress(job_id: str) -> Response:
                 while queue:
                     data = queue.popleft()
                     yield f"data: {json.dumps(data)}\n\n"
+                    last_heartbeat_time = time.time()
 
-                    # Terminal events
                     if data.get("type") == "delete_complete":
                         return
 
-                time.sleep(0.1)
+                # Send heartbeat if no activity for a while
+                now = time.time()
+                if now - last_heartbeat_time > sse_mgr.heartbeat_interval:
+                    yield ": heartbeat\n\n"
+                    last_heartbeat_time = now
+
+                # Wait for signal (event-driven, no busy polling)
+                event.wait(timeout=sse_mgr.heartbeat_interval)
+                event.clear()
 
                 # Check if job still exists
                 job = manager.get_job(job_id)
@@ -181,11 +176,7 @@ def get_progress(job_id: str) -> Response:
                     return
 
         finally:
-            with _sse_lock:
-                if job_id in _sse_queues and queue in _sse_queues[job_id]:
-                    _sse_queues[job_id].remove(queue)
-                    if not _sse_queues[job_id]:
-                        del _sse_queues[job_id]
+            sse_mgr.deregister_client(job_id, queue)
 
     return Response(
         generate(),

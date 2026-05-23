@@ -2,8 +2,8 @@
  * Confirmation modal shown when the user clicks "Cancel Upload".
  */
 
-import Modal from "../common/Modal.tsx";
-import { WarningIcon } from "../../utils/icons.tsx";
+import { WarningIcon } from '../../utils/icons.tsx';
+import Modal from '../common/Modal.tsx';
 
 interface CancelConfirmModalProps {
   isOpen: boolean;
@@ -51,9 +51,9 @@ export default function CancelConfirmModal({
           <WarningIcon className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div className="text-sm text-amber-800">
             <p>
-              <strong>{filesProcessed}</strong> of <strong>{totalFiles}</strong> files
-              have been processed so far. Cancelling will stop the remaining{" "}
-              <strong>{remaining}</strong> file{remaining !== 1 ? "s" : ""} from being uploaded.
+              <strong>{filesProcessed}</strong> of <strong>{totalFiles}</strong> files have been
+              processed so far. Cancelling will stop the remaining <strong>{remaining}</strong> file
+              {remaining !== 1 ? 's' : ''} from being uploaded.
             </p>
             <p className="mt-2 text-amber-700">
               Files already uploaded will remain in cloud storage.

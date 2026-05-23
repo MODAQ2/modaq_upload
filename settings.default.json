@@ -4,6 +4,20 @@
     "s3_bucket": "",
     "default_upload_folder": "",
     "log_directory": "logs",
+    "file_categories": [
+        {
+            "name": "data",
+            "extensions": ["mcap", "tdms", "done", "csv"],
+            "partition_interval": "10min",
+            "description": "High-frequency data files"
+        },
+        {
+            "name": "logs",
+            "extensions": ["txt", "log", "yaml", "logs"],
+            "partition_interval": "daily",
+            "description": "System and operation logs"
+        }
+    ],
     "batch_processing": {
         "enabled": true,
         "batch_size": 100,
