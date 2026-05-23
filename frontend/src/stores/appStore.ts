@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import { apiGet, apiPost, apiPut } from '../api/client.ts';
-import type { AppSettings, BranchListResult, BranchSwitchResult, RollbackResult, UpdateCheckResult, VersionInfo } from '../types/api.ts';
+import type {
+  AppSettings,
+  BranchListResult,
+  BranchSwitchResult,
+  RollbackResult,
+  UpdateCheckResult,
+  VersionInfo,
+} from '../types/api.ts';
 
 export interface Notification {
   id: string;

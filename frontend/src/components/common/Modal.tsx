@@ -12,7 +12,15 @@ interface ModalProps {
   locked?: boolean;
 }
 
-export default function Modal({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-sm', locked = false }: ModalProps) {
+export default function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  footer,
+  maxWidth = 'max-w-sm',
+  locked = false,
+}: ModalProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

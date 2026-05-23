@@ -62,6 +62,7 @@ function Terminal({ lines }: { lines: string[] }) {
   return (
     <div
       ref={parentRef}
+      role="log"
       onScroll={handleScroll}
       className="bg-gray-950 text-green-400 font-mono text-xs rounded-lg px-4 py-3 h-96 overflow-y-auto"
       aria-label="Sync output"

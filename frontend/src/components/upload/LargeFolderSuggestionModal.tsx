@@ -49,10 +49,8 @@ export default function LargeFolderSuggestionModal({
       <div className="space-y-3 text-sm text-gray-700">
         <p>
           This folder contains{' '}
-          <span className="font-semibold text-nlr-text">
-            {fileCount.toLocaleString()} files
-          </span>
-          , which is a very large upload.
+          <span className="font-semibold text-nlr-text">{fileCount.toLocaleString()} files</span>,
+          which is a very large upload.
         </p>
         <p>
           The standard upload analyzes every file individually (checking timestamps, detecting
@@ -60,13 +58,13 @@ export default function LargeFolderSuggestionModal({
         </p>
         <p>
           <span className="font-semibold text-nlr-text">Large Folder Upload</span> uses{' '}
-          <code className="font-mono bg-gray-100 px-1 rounded">aws s3 sync</code> to mirror
-          the entire folder directly — much faster for large datasets, with real-time console
-          output and the ability to cancel at any time.
+          <code className="font-mono bg-gray-100 px-1 rounded">aws s3 sync</code> to mirror the
+          entire folder directly — much faster for large datasets, with real-time console output and
+          the ability to cancel at any time.
         </p>
         <p className="text-gray-500 text-xs">
-          Note: Large Folder Upload preserves your folder structure as-is rather than applying
-          Hive partitioning.
+          Note: Large Folder Upload preserves your folder structure as-is rather than applying Hive
+          partitioning.
         </p>
       </div>
     </Modal>

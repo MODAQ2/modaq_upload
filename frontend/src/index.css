@@ -151,9 +151,18 @@ body {
 
 /* ── Indeterminate scanning bar ── */
 @keyframes scanning {
-  0%   { margin-left: -40%; width: 40%; }
-  50%  { margin-left: 30%; width: 70%; }
-  100% { margin-left: 100%; width: 40%; }
+  0% {
+    margin-left: -40%;
+    width: 40%;
+  }
+  50% {
+    margin-left: 30%;
+    width: 70%;
+  }
+  100% {
+    margin-left: 100%;
+    width: 40%;
+  }
 }
 
 .scanning-bar {

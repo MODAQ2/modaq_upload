@@ -257,8 +257,10 @@ export default function UploadPage() {
   // dep ensures this recomputes whenever the store is mutated (scan populate,
   // SSE updates, etc.).  Without it, `store` never changes reference (singleton)
   // so the memo would always return the empty array from mount time.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- `files` is an intentional reactive trigger for the mutable store singleton
+  /* eslint-disable react-hooks/exhaustive-deps -- `files` is an intentional reactive trigger for the mutable store singleton */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `files` is an intentional reactive trigger — store is a stable singleton but files snapshot drives recompute
   const allFiles = useMemo(() => Array.from(store.getAllRows().values()), [store, files]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const toggleAllFiltered = useCallback(() => {
     const filteredPaths = files.map((f) => f.path);

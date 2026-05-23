@@ -1,8 +1,8 @@
+import { CheckCircle2, ChevronDown, ChevronUp, Loader2, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiGet, apiPost } from '../../api/client.ts';
 import { useAppStore } from '../../stores/appStore.ts';
 import type { UpdateCheckResult, UpdateResult } from '../../types/api.ts';
-import { CheckCircle2, ChevronDown, ChevronUp, Loader2, XCircle } from 'lucide-react';
 import { ExternalLinkIcon } from '../../utils/icons.tsx';
 
 const GITHUB_ISSUES = 'https://github.com/MODAQ2/modaq_upload/issues';
@@ -51,7 +51,7 @@ export default function UpdateSection() {
         addNotification('success', 'Update complete — reload to use the new version');
         loadVersion();
       } else {
-        addNotification('warning', 'Update didn\'t complete — your previous version is intact');
+        addNotification('warning', "Update didn't complete — your previous version is intact");
       }
     } catch {
       addNotification('error', 'Failed to update application');
@@ -102,10 +102,13 @@ export default function UpdateSection() {
             <span>
               A new version is available
               {checkResult.remote_version && (
-                <> — <strong className="font-mono">v{checkResult.remote_version}</strong></>
-              )}.
-              {' '}Your current version will be saved before updating and automatically
-              restored if anything goes wrong.
+                <>
+                  {' '}
+                  — <strong className="font-mono">v{checkResult.remote_version}</strong>
+                </>
+              )}
+              . Your current version will be saved before updating and automatically restored if
+              anything goes wrong.
             </span>
           ) : (
             <span className="flex items-center gap-2">
@@ -132,7 +135,11 @@ export default function UpdateSection() {
                   ) : (
                     <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
                   )}
-                  <span className={step?.success === false ? 'text-red-600 font-medium' : 'text-gray-600'}>
+                  <span
+                    className={
+                      step?.success === false ? 'text-red-600 font-medium' : 'text-gray-600'
+                    }
+                  >
                     {label}
                   </span>
                 </div>

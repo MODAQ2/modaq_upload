@@ -1,8 +1,3 @@
-import { useState } from 'react';
-import { apiPost } from '../../api/client.ts';
-import { useAppStore } from '../../stores/appStore.ts';
-import type { RollbackResult, UpdateResult } from '../../types/api.ts';
-import Modal from '../common/Modal.tsx';
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,6 +9,11 @@ import {
   RotateCcw,
   XCircle,
 } from 'lucide-react';
+import { useState } from 'react';
+import { apiPost } from '../../api/client.ts';
+import { useAppStore } from '../../stores/appStore.ts';
+import type { UpdateResult } from '../../types/api.ts';
+import Modal from '../common/Modal.tsx';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,7 +49,9 @@ function StepRow({ label, status, output, showDetails }: StepRowProps) {
     running: <Loader2 className="w-4 h-4 text-nlr-blue animate-spin" />,
     done: <CheckCircle2 className="w-4 h-4 text-green-500" />,
     failed: <XCircle className="w-4 h-4 text-red-500" />,
-    skipped: <span className="w-4 h-4 rounded-full border-2 border-gray-200 inline-block opacity-40" />,
+    skipped: (
+      <span className="w-4 h-4 rounded-full border-2 border-gray-200 inline-block opacity-40" />
+    ),
   }[status];
 
   const textColor = {
@@ -92,9 +94,10 @@ export default function UpdateModal() {
   } = useAppStore();
 
   // Update flow
-  const [phase, setPhase] = useState<'idle' | 'updating' | 'success' | 'failed' | 'rolledback' | 'rollback_failed'>('idle');
+  const [phase, setPhase] = useState<
+    'idle' | 'updating' | 'success' | 'failed' | 'rolledback' | 'rollback_failed'
+  >('idle');
   const [updateResult, setUpdateResult] = useState<UpdateResult | null>(null);
-  const [_rollbackResult, setRollbackResult] = useState<RollbackResult | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [runningStep, setRunningStep] = useState<string | null>(null);
 
@@ -113,7 +116,13 @@ export default function UpdateModal() {
 
   // ── Compute step statuses from result ──
   function getStepStatuses(result: UpdateResult | null): Record<string, StepStatus> {
-    const order = result?.step_order ?? ['git_pull', 'pip_install', 'modaq_toolkit', 'npm_install', 'frontend_build'];
+    const order = result?.step_order ?? [
+      'git_pull',
+      'pip_install',
+      'modaq_toolkit',
+      'npm_install',
+      'frontend_build',
+    ];
     const statuses: Record<string, StepStatus> = {};
     let hitFailed = false;
     for (const key of order) {
@@ -157,11 +166,10 @@ export default function UpdateModal() {
         loadVersion();
       } else {
         setPhase('failed');
-        addNotification('warning', 'Update didn\'t complete — attempting rollback…');
+        addNotification('warning', "Update didn't complete — attempting rollback…");
         // Auto rollback
         if (result.pre_update_commit) {
           const rb = await rollbackUpdate(result.pre_update_commit);
-          setRollbackResult(rb);
           if (rb.success) {
             setPhase('rolledback');
             loadVersion();
@@ -204,7 +212,13 @@ export default function UpdateModal() {
   }
 
   const stepStatuses = getStepStatuses(phase === 'idle' ? null : updateResult);
-  const stepOrder = updateResult?.step_order ?? ['git_pull', 'pip_install', 'modaq_toolkit', 'npm_install', 'frontend_build'];
+  const stepOrder = updateResult?.step_order ?? [
+    'git_pull',
+    'pip_install',
+    'modaq_toolkit',
+    'npm_install',
+    'frontend_build',
+  ];
 
   // ── Render ──
 
@@ -296,7 +310,6 @@ export default function UpdateModal() {
       }
     >
       <div className="space-y-4">
-
         {/* ── Version summary card ── */}
         <div className="rounded-lg bg-gray-50 border border-gray-200 p-4">
           {phase === 'idle' && updatesAvailable && (
@@ -305,14 +318,19 @@ export default function UpdateModal() {
                 A new version of MODAQ Uploader is available.
               </p>
               <div className="mt-2 flex items-center gap-6 text-xs text-gray-500">
-                <span>Current: <strong className="font-mono text-gray-700">v{currentVersion ?? '—'}</strong></span>
+                <span>
+                  Current:{' '}
+                  <strong className="font-mono text-gray-700">v{currentVersion ?? '—'}</strong>
+                </span>
                 {remoteVersion && (
-                  <span>Available: <strong className="font-mono text-nlr-blue">v{remoteVersion}</strong></span>
+                  <span>
+                    Available: <strong className="font-mono text-nlr-blue">v{remoteVersion}</strong>
+                  </span>
                 )}
               </div>
               <p className="mt-3 text-xs text-gray-500">
-                Your current version will be saved before updating. If anything goes wrong,
-                MODAQ Uploader will automatically restore the previous version.
+                Your current version will be saved before updating. If anything goes wrong, MODAQ
+                Uploader will automatically restore the previous version.
               </p>
             </>
           )}
@@ -321,7 +339,11 @@ export default function UpdateModal() {
             <p className="text-sm font-semibold text-green-700 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4" />
               You're using the latest version of MODAQ Uploader.
-              {currentVersion && <span className="font-mono text-xs font-normal text-gray-500 ml-1">v{currentVersion}</span>}
+              {currentVersion && (
+                <span className="font-mono text-xs font-normal text-gray-500 ml-1">
+                  v{currentVersion}
+                </span>
+              )}
             </p>
           )}
 
@@ -336,7 +358,11 @@ export default function UpdateModal() {
             <p className="text-sm font-semibold text-green-700 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4" />
               Update complete.
-              {remoteVersion && <span className="font-mono text-xs font-normal ml-1">v{remoteVersion} is ready.</span>}
+              {remoteVersion && (
+                <span className="font-mono text-xs font-normal ml-1">
+                  v{remoteVersion} is ready.
+                </span>
+              )}
             </p>
           )}
 
@@ -361,10 +387,15 @@ export default function UpdateModal() {
               </p>
               <p className="text-xs text-gray-600">
                 We could not automatically restore the previous version. Please{' '}
-                <a href={GITHUB_ISSUES} target="_blank" rel="noopener noreferrer" className="text-nlr-blue underline">
+                <a
+                  href={GITHUB_ISSUES}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-nlr-blue underline"
+                >
                   report a problem
-                </a>
-                {' '}or contact support.
+                </a>{' '}
+                or contact support.
               </p>
             </div>
           )}
@@ -377,9 +408,15 @@ export default function UpdateModal() {
               </p>
               <p className="text-xs text-gray-500">
                 The previous version is still intact. Please{' '}
-                <a href={GITHUB_ISSUES} target="_blank" rel="noopener noreferrer" className="text-nlr-blue underline">
+                <a
+                  href={GITHUB_ISSUES}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-nlr-blue underline"
+                >
                   report a problem
-                </a>{' '}if this keeps happening.
+                </a>{' '}
+                if this keeps happening.
               </p>
             </div>
           )}
@@ -392,8 +429,9 @@ export default function UpdateModal() {
               const step = updateResult?.results[key];
               const label = step?.label ?? defaultLabels[key] ?? key;
               const status: StepStatus =
-                phase === 'updating' && runningStep === key ? 'running'
-                  : stepStatuses[key] ?? 'pending';
+                phase === 'updating' && runningStep === key
+                  ? 'running'
+                  : (stepStatuses[key] ?? 'pending');
               return (
                 <StepRow
                   key={key}
@@ -411,7 +449,11 @@ export default function UpdateModal() {
               onClick={() => setShowDetails((v) => !v)}
               className="mt-1 text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1 transition-colors"
             >
-              {showDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              {showDetails ? (
+                <ChevronUp className="w-3 h-3" />
+              ) : (
+                <ChevronDown className="w-3 h-3" />
+              )}
               {showDetails ? 'Hide technical details' : 'Show technical details'}
             </button>
           </div>
@@ -441,16 +483,18 @@ export default function UpdateModal() {
                   </span>
                 )}
               </span>
-              {channelOpen
-                ? <ChevronUp className="w-4 h-4 text-gray-400" />
-                : <ChevronDown className="w-4 h-4 text-gray-400" />}
+              {channelOpen ? (
+                <ChevronUp className="w-4 h-4 text-gray-400" />
+              ) : (
+                <ChevronDown className="w-4 h-4 text-gray-400" />
+              )}
             </button>
 
             {channelOpen && (
               <div className="px-4 py-3 space-y-3">
                 <p className="text-xs text-gray-500">
-                  <strong>Update channel</strong> — choose which version of MODAQ Uploader you receive.
-                  Switching will take effect after you reload the page.
+                  <strong>Update channel</strong> — choose which version of MODAQ Uploader you
+                  receive. Switching will take effect after you reload the page.
                 </p>
 
                 <div className="divide-y divide-gray-100 border border-gray-100 rounded-md overflow-hidden">
@@ -467,9 +511,13 @@ export default function UpdateModal() {
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          {isCurrent && <CheckCircle2 className="w-3.5 h-3.5 text-nlr-blue flex-shrink-0" />}
+                          {isCurrent && (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-nlr-blue flex-shrink-0" />
+                          )}
                           <div>
-                            <span className={`text-sm ${isCurrent ? 'text-nlr-blue font-semibold' : 'text-gray-700'}`}>
+                            <span
+                              className={`text-sm ${isCurrent ? 'text-nlr-blue font-semibold' : 'text-gray-700'}`}
+                            >
                               {label}
                             </span>
                             {badge && (
@@ -486,11 +534,15 @@ export default function UpdateModal() {
                             disabled={switchingBranch !== null}
                             className="text-xs text-nlr-blue hover:underline disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
                           >
-                            {isSwitching
-                              ? <Loader2 className="w-3 h-3 animate-spin" />
-                              : isSwitchDone
-                                ? <><CheckCircle2 className="w-3 h-3 text-green-500" /> Switched</>
-                                : 'Switch'}
+                            {isSwitching ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : isSwitchDone ? (
+                              <>
+                                <CheckCircle2 className="w-3 h-3 text-green-500" /> Switched
+                              </>
+                            ) : (
+                              'Switch'
+                            )}
                           </button>
                         )}
                       </div>
@@ -521,7 +573,6 @@ export default function UpdateModal() {
             )}
           </div>
         )}
-
       </div>
     </Modal>
   );

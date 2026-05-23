@@ -1,8 +1,8 @@
+import { CheckCircle2 } from 'lucide-react';
 import { useState } from 'react';
 import { apiGet, apiPost } from '../../api/client.ts';
 import { useAppStore } from '../../stores/appStore.ts';
 import type { BranchListResult, UpdateCheckResult, UpdateResult } from '../../types/api.ts';
-import Modal from '../common/Modal.tsx';
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -13,7 +13,7 @@ import {
   SpinnerIcon,
   XCircleIcon,
 } from '../../utils/icons.tsx';
-import { CheckCircle2 } from 'lucide-react';
+import Modal from '../common/Modal.tsx';
 
 const GITHUB_REPO = 'https://github.com/MODAQ2/modaq_upload';
 const GITHUB_ISSUES = `${GITHUB_REPO}/issues`;
@@ -112,7 +112,7 @@ export default function AboutModal({ isOpen, onClose }: AboutModalProps) {
         addNotification('success', 'Update complete — reload to use the new version');
         loadVersion();
       } else {
-        addNotification('warning', 'Update didn\'t complete — your previous version is intact');
+        addNotification('warning', "Update didn't complete — your previous version is intact");
       }
     } catch {
       addNotification('error', 'Failed to update application');
@@ -148,7 +148,13 @@ export default function AboutModal({ isOpen, onClose }: AboutModalProps) {
 
   const currentBranch = branchInfo?.current ?? null;
   const branches = branchInfo?.branches ?? [];
-  const stepOrder = updateResult?.step_order ?? ['git_pull', 'pip_install', 'modaq_toolkit', 'npm_install', 'frontend_build'];
+  const stepOrder = updateResult?.step_order ?? [
+    'git_pull',
+    'pip_install',
+    'modaq_toolkit',
+    'npm_install',
+    'frontend_build',
+  ];
   const defaultLabels: Record<string, string> = {
     git_pull: 'Downloading update',
     pip_install: 'Installing Python packages',
@@ -277,10 +283,13 @@ export default function AboutModal({ isOpen, onClose }: AboutModalProps) {
                   <p className="text-sm text-gray-700">
                     A new version is available
                     {checkResult.remote_version && (
-                      <> — <strong className="font-mono">v{checkResult.remote_version}</strong></>
-                    )}.
-                    {' '}Your current version will be saved before updating, and automatically
-                    restored if anything goes wrong.
+                      <>
+                        {' '}
+                        — <strong className="font-mono">v{checkResult.remote_version}</strong>
+                      </>
+                    )}
+                    . Your current version will be saved before updating, and automatically restored
+                    if anything goes wrong.
                   </p>
                 ) : (
                   <p className="text-sm text-gray-600 flex items-center gap-2">
@@ -297,10 +306,11 @@ export default function AboutModal({ isOpen, onClose }: AboutModalProps) {
                 {stepOrder.map((key) => {
                   const step = updateResult.results[key];
                   const label = step?.label ?? defaultLabels[key] ?? key;
-                  const icon = !step ? null
-                    : step.success
-                      ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
-                      : <XCircleIcon className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />;
+                  const icon = !step ? null : step.success ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+                  ) : (
+                    <XCircleIcon className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
+                  );
                   return (
                     <div key={key} className="space-y-0.5">
                       <div className="flex items-center gap-2 text-xs text-gray-600">
@@ -320,7 +330,11 @@ export default function AboutModal({ isOpen, onClose }: AboutModalProps) {
                   onClick={() => setShowDetails((v) => !v)}
                   className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1 transition-colors"
                 >
-                  {showDetails ? <ChevronUpIcon className="w-3 h-3" /> : <ChevronDownIcon className="w-3 h-3" />}
+                  {showDetails ? (
+                    <ChevronUpIcon className="w-3 h-3" />
+                  ) : (
+                    <ChevronDownIcon className="w-3 h-3" />
+                  )}
                   {showDetails ? 'Hide technical details' : 'Show technical details'}
                 </button>
               </div>
@@ -357,7 +371,9 @@ export default function AboutModal({ isOpen, onClose }: AboutModalProps) {
                   className="px-3 py-1.5 text-xs font-medium text-white bg-nlr-blue rounded hover:bg-nlr-blue-light disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                 >
                   {updating ? (
-                    <><SpinnerIcon className="w-3 h-3 animate-spin" /> Updating…</>
+                    <>
+                      <SpinnerIcon className="w-3 h-3 animate-spin" /> Updating…
+                    </>
                   ) : (
                     'Update now'
                   )}
@@ -419,8 +435,12 @@ export default function AboutModal({ isOpen, onClose }: AboutModalProps) {
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          {isCurrent && <CheckCircle2 className="w-3.5 h-3.5 text-nlr-blue flex-shrink-0" />}
-                          <span className={`text-sm ${isCurrent ? 'text-nlr-blue font-semibold' : 'text-gray-700'}`}>
+                          {isCurrent && (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-nlr-blue flex-shrink-0" />
+                          )}
+                          <span
+                            className={`text-sm ${isCurrent ? 'text-nlr-blue font-semibold' : 'text-gray-700'}`}
+                          >
                             {label}
                           </span>
                           {badge && (
@@ -436,11 +456,15 @@ export default function AboutModal({ isOpen, onClose }: AboutModalProps) {
                             disabled={switchingBranch !== null}
                             className="text-xs text-nlr-blue hover:underline disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
                           >
-                            {isSwitching
-                              ? <SpinnerIcon className="w-3 h-3 animate-spin inline" />
-                              : isSwitchDone
-                                ? <><CheckCircle2 className="w-3 h-3 text-green-500 inline" /> Switched</>
-                                : 'Switch'}
+                            {isSwitching ? (
+                              <SpinnerIcon className="w-3 h-3 animate-spin inline" />
+                            ) : isSwitchDone ? (
+                              <>
+                                <CheckCircle2 className="w-3 h-3 text-green-500 inline" /> Switched
+                              </>
+                            ) : (
+                              'Switch'
+                            )}
                           </button>
                         )}
                       </div>

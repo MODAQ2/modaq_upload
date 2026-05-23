@@ -57,7 +57,8 @@ describe('Layout', () => {
     // Modal should now be open - check for the modal backdrop and version info
     expect(screen.getByTestId('modal-backdrop')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'About' })).toBeInTheDocument();
-    expect(screen.getByText('1.2.3')).toBeInTheDocument();
+    // Both nav badge and modal show v1.2.3; check commit to confirm modal content
+    expect(screen.getAllByText('v1.2.3').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText('abc1234')).toBeInTheDocument();
   });
 
