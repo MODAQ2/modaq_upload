@@ -58,6 +58,7 @@ class Settings:
 
     _instance: "Settings | None" = None
     _settings: dict[str, Any]
+    _provenance: dict[str, dict[str, str]]
 
     def __new__(cls) -> "Settings":
         """Singleton pattern to ensure only one settings instance exists."""
@@ -83,34 +84,58 @@ class Settings:
             "default_upload_folder": "",
             "display_name": "MODAQ Uploader",
             "log_directory": "logs",
+            "batch_processing": {
+                "enabled": True,
+                "batch_size": 100,
+                "auto_tune_workers": True,
+                "max_workers": 4,
+                "target_cpu_percent": 70.0,
+                "skip_mcap_validation": False,
+                "use_database_for_large_jobs": True,
+                "large_job_threshold": 1000,
+            },
         }
+
+        # Track the source of each setting value as it is applied layer by layer.
+        provenance: dict[str, dict[str, str]] = {k: {"source": "builtin"} for k in defaults}
 
         # Load from settings.default.json if it exists
         if SETTINGS_DEFAULT_FILE.exists():
             with open(SETTINGS_DEFAULT_FILE, encoding="utf-8") as f:
-                defaults.update(json.load(f))
+                default_data = json.load(f)
+            defaults.update(default_data)
+            for k in default_data:
+                provenance[k] = {"source": "default_file", "path": str(SETTINGS_DEFAULT_FILE)}
 
         # Load from settings.json if it exists
         if SETTINGS_FILE.exists():
             with open(SETTINGS_FILE, encoding="utf-8") as f:
-                defaults.update(json.load(f))
+                user_data = json.load(f)
+            defaults.update(user_data)
+            for k in user_data:
+                provenance[k] = {"source": "settings_file", "path": str(SETTINGS_FILE)}
 
         # Override with environment variables (highest priority)
-        env_overrides = {
-            "aws_profile": os.environ.get(ENV_AWS_PROFILE),
-            "aws_region": os.environ.get(ENV_AWS_REGION),
-            "s3_bucket": os.environ.get(ENV_S3_BUCKET),
-            "default_upload_folder": os.environ.get(ENV_DEFAULT_UPLOAD_FOLDER),
-            "display_name": os.environ.get(ENV_DISPLAY_NAME),
-            "log_directory": os.environ.get(ENV_LOG_DIRECTORY),
+        env_overrides: dict[str, tuple[str | None, str]] = {
+            "aws_profile": (os.environ.get(ENV_AWS_PROFILE), ENV_AWS_PROFILE),
+            "aws_region": (os.environ.get(ENV_AWS_REGION), ENV_AWS_REGION),
+            "s3_bucket": (os.environ.get(ENV_S3_BUCKET), ENV_S3_BUCKET),
+            "default_upload_folder": (
+                os.environ.get(ENV_DEFAULT_UPLOAD_FOLDER),
+                ENV_DEFAULT_UPLOAD_FOLDER,
+            ),
+            "display_name": (os.environ.get(ENV_DISPLAY_NAME), ENV_DISPLAY_NAME),
+            "log_directory": (os.environ.get(ENV_LOG_DIRECTORY), ENV_LOG_DIRECTORY),
         }
 
         # Only apply non-None environment values
-        for key, value in env_overrides.items():
+        for key, (value, env_var) in env_overrides.items():
             if value is not None:
                 defaults[key] = value
+                provenance[key] = {"source": "env", "env_var": env_var}
 
         self._settings = defaults
+        self._provenance = provenance
 
         # Save settings.json if it doesn't exist
         if not SETTINGS_FILE.exists():
@@ -138,6 +163,10 @@ class Settings:
     def all(self) -> dict[str, Any]:
         """Get all settings as a dictionary."""
         return self._settings.copy()
+
+    def to_response(self) -> dict[str, Any]:
+        """Return settings with value_sources provenance for API responses."""
+        return {**self._settings, "value_sources": self._provenance}
 
     def reload(self) -> None:
         """Reload settings from file."""
@@ -176,6 +205,15 @@ class Settings:
         if not path.is_absolute():
             path = BASE_DIR / path
         return path
+
+    @property
+    def batch_processing(self) -> dict[str, Any]:
+        """Get batch processing configuration."""
+        return dict(self._settings.get("batch_processing", {}))
+
+    def get_batch_config(self) -> dict[str, Any]:
+        """Get batch processing configuration (alias for batch_processing property)."""
+        return self.batch_processing
 
 
 def get_settings() -> Settings:
@@ -241,11 +279,19 @@ class AppUpdater:
             "git_pull": {"success": False, "output": ""},
             "pip_install": {"success": False, "output": ""},
             "modaq_toolkit": {"success": False, "output": ""},
+            "npm_install": {"success": False, "output": ""},
+            "frontend_build": {"success": False, "output": ""},
         }
 
-        steps: list[tuple[str, list[str]]] = [
-            ("git_pull", ["git", "pull"]),
-            ("pip_install", [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]),
+        frontend_dir = str(self.base_dir / "frontend")
+
+        steps: list[tuple[str, list[str], str | None]] = [
+            ("git_pull", ["git", "pull"], None),
+            (
+                "pip_install",
+                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+                None,
+            ),
             (
                 "modaq_toolkit",
                 [
@@ -257,14 +303,17 @@ class AppUpdater:
                     "--force-reinstall",
                     "git+https://github.com/MODAQ2/MODAQ_toolkit.git",
                 ],
+                None,
             ),
+            ("npm_install", ["npm", "install"], frontend_dir),
+            ("frontend_build", ["npm", "run", "build"], frontend_dir),
         ]
 
-        for step_name, cmd in steps:
+        for step_name, cmd, cwd in steps:
             try:
                 result = subprocess.run(
                     cmd,
-                    cwd=self.base_dir,
+                    cwd=cwd or self.base_dir,
                     capture_output=True,
                     text=True,
                     check=True,

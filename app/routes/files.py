@@ -1,11 +1,13 @@
 """File browsing API routes for modaq_upload"""
 
+import os
 from pathlib import Path
 
 from flask import Blueprint, Response, g, jsonify, request
 
 from app.config import get_settings
 from app.services import s3_service
+from app.services.cache_service import get_cache_service
 
 files_bp = Blueprint("files", __name__)
 
@@ -101,58 +103,6 @@ def get_file_info() -> tuple[Response, int]:
         return jsonify({"error": str(e)}), 500
 
 
-@files_bp.route("/search", methods=["GET"])
-def search_files() -> tuple[Response, int]:
-    """Search for files in S3 bucket by name pattern.
-
-    Query parameters:
-        query: Search query string
-        prefix: S3 prefix to search within (default: "")
-
-    Returns:
-        JSON response with matching files
-    """
-    query = request.args.get("query", "").lower()
-    prefix = request.args.get("prefix", "")
-
-    if not query:
-        return jsonify({"error": "Search query required"}), 400
-
-    try:
-        client = s3_service.create_s3_client(
-            g.settings.aws_profile,
-            g.settings.aws_region,
-        )
-
-        # List all objects with prefix (no delimiter to get all files)
-        result = s3_service.list_bucket_objects(
-            client,
-            g.settings.s3_bucket,
-            prefix=prefix,
-            delimiter="",  # No delimiter to get all nested files
-            max_keys=10000,
-        )
-
-        if not result["success"]:
-            return jsonify({"error": result["error"]}), 500
-
-        # Filter files by query
-        matching_files = [f for f in result["files"] if query in f["name"].lower()]
-
-        return jsonify(
-            {
-                "success": True,
-                "query": query,
-                "prefix": prefix,
-                "files": matching_files[:100],  # Limit results
-                "total_matches": len(matching_files),
-            }
-        ), 200
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 @files_bp.route("/browse", methods=["GET"])
 def browse_local() -> tuple[Response, int]:
     """Browse local filesystem for folder selection.
@@ -163,12 +113,16 @@ def browse_local() -> tuple[Response, int]:
     Returns:
         JSON response with folders, files, and navigation info
     """
-    # Get requested path, default to home directory
+    # Get requested path, default to configured upload folder or home directory
     requested_path = request.args.get("path", "")
 
     if not requested_path:
-        # Default to home directory
-        requested_path = str(Path.home())
+        settings = get_settings()
+        default_folder = settings.default_upload_folder
+        if default_folder and Path(default_folder).is_dir():
+            requested_path = default_folder
+        else:
+            requested_path = str(Path.home())
 
     path = Path(requested_path)
 
@@ -189,50 +143,88 @@ def browse_local() -> tuple[Response, int]:
     if not path.is_dir():
         return jsonify({"error": f"Not a directory: {path}"}), 400
 
-    # Build response
-    folders: list[dict[str, str | int]] = []
-    files: list[dict[str, str | int | float]] = []
-    mcap_count = 0
+    # Build response — single-pass walk for recursive MCAP counts + cache checks.
+    # os.walk with onerror skips unreadable subdirectories instead of aborting,
+    # which is important on Linux where permission errors are common.
+    cache = get_cache_service()
+    bucket = g.settings.s3_bucket
 
-    try:
-        for entry in sorted(path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-            # Skip hidden files/folders (starting with .)
-            if entry.name.startswith("."):
+    folder_mcap_counts: dict[str, int] = {}
+    folder_uploaded_counts: dict[str, int] = {}
+    files: list[dict[str, str | int | float | bool]] = []
+    mcap_count = 0
+    direct_uploaded = 0
+
+    def _walk_error(err: OSError) -> None:
+        pass  # Skip unreadable directories silently
+
+    for dirpath, dirnames, filenames in os.walk(str(path), onerror=_walk_error):
+        # Skip hidden directories in-place so os.walk won't descend into them
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+
+        for fname in filenames:
+            if not fname.endswith(".mcap") or fname.startswith("."):
                 continue
 
+            mcap_path = Path(dirpath) / fname
+            rel = mcap_path.relative_to(path)
+            parts = rel.parts
+
+            try:
+                file_stat = mcap_path.stat()
+            except OSError:
+                continue
+
+            uploaded = (
+                cache.check_exists_by_filename(bucket, mcap_path.name, file_stat.st_size) is True
+            )
+
+            if len(parts) == 1:
+                # Direct child MCAP file
+                mcap_count += 1
+                if uploaded:
+                    direct_uploaded += 1
+                files.append(
+                    {
+                        "name": mcap_path.name,
+                        "path": str(mcap_path),
+                        "size": file_stat.st_size,
+                        "mtime": file_stat.st_mtime,
+                        "already_uploaded": uploaded,
+                    }
+                )
+            else:
+                # Nested — attribute to the immediate subfolder
+                folder_name = parts[0]
+                folder_mcap_counts[folder_name] = folder_mcap_counts.get(folder_name, 0) + 1
+                if uploaded:
+                    folder_uploaded_counts[folder_name] = (
+                        folder_uploaded_counts.get(folder_name, 0) + 1
+                    )
+
+    # Build folder list from direct children (non-hidden directories)
+    folders: list[dict[str, str | int]] = []
+    try:
+        for entry in sorted(path.iterdir(), key=lambda x: x.name.lower()):
+            if entry.name.startswith("."):
+                continue
             try:
                 if entry.is_dir():
-                    # Count MCAP files in this folder (non-recursive, for preview)
-                    try:
-                        mcap_in_folder = sum(1 for f in entry.iterdir() if f.suffix == ".mcap")
-                    except PermissionError:
-                        mcap_in_folder = 0
-
                     folders.append(
                         {
                             "name": entry.name,
                             "path": str(entry),
-                            "mcap_count": mcap_in_folder,
+                            "mcap_count": folder_mcap_counts.get(entry.name, 0),
+                            "already_uploaded": folder_uploaded_counts.get(entry.name, 0),
                         }
                     )
-                elif entry.is_file():
-                    if entry.suffix == ".mcap":
-                        mcap_count += 1
-                        file_stat = entry.stat()
-                        files.append(
-                            {
-                                "name": entry.name,
-                                "path": str(entry),
-                                "size": file_stat.st_size,
-                                "mtime": file_stat.st_mtime,
-                            }
-                        )
             except PermissionError:
-                # Skip entries we can't access
                 continue
-
     except PermissionError:
         return jsonify({"error": f"Permission denied: {path}"}), 403
+
+    # Sort files by name
+    files.sort(key=lambda f: str(f["name"]).lower())
 
     # Build breadcrumbs for navigation
     breadcrumbs: list[dict[str, str]] = []
@@ -249,13 +241,53 @@ def browse_local() -> tuple[Response, int]:
         {"name": "Home", "path": str(Path.home())},
     ]
 
+    # Add SURFWEC SSD as the top priority quick link
+    surfwec_ssd = Path("/media/m2/SURFWEC_SSD")
+    if surfwec_ssd.exists() and surfwec_ssd.is_dir():
+        quick_links.append({"name": "SURFWEC_SSD", "path": str(surfwec_ssd)})
+
     # Add Volumes on macOS
     volumes_path = Path("/Volumes")
     if volumes_path.exists():
         try:
-            for vol in volumes_path.iterdir():
+            for vol in sorted(volumes_path.iterdir(), key=lambda x: x.name.lower()):
                 if vol.is_dir() and not vol.name.startswith("."):
                     quick_links.append({"name": vol.name, "path": str(vol)})
+        except PermissionError:
+            pass
+
+    # Add /media/m2 as a priority quick link on Linux if it exists
+    media_m2 = Path("/media/m2")
+    if media_m2.exists() and media_m2.is_dir():
+        quick_links.append({"name": "m2", "path": str(media_m2)})
+
+    # Add /media itself and its subdirectories on Linux (removable drives, USB, etc.)
+    media_path = Path("/media")
+    if media_path.exists() and not volumes_path.exists():
+        quick_links.append({"name": "media", "path": str(media_path)})
+        try:
+            for entry in sorted(media_path.iterdir(), key=lambda x: x.name.lower()):
+                if not entry.is_dir() or entry.name.startswith("."):
+                    continue
+                entry_str = str(entry)
+                # Already added /media/m2 above
+                if entry_str == str(media_m2):
+                    continue
+                # If it's a user directory (e.g. /media/username), list its children
+                try:
+                    children = [
+                        c for c in entry.iterdir() if c.is_dir() and not c.name.startswith(".")
+                    ]
+                except PermissionError:
+                    children = []
+                if children:
+                    for child in sorted(children, key=lambda x: x.name.lower()):
+                        # Already added SURFWEC_SSD above
+                        if child == surfwec_ssd:
+                            continue
+                        quick_links.append({"name": child.name, "path": str(child)})
+                else:
+                    quick_links.append({"name": entry.name, "path": entry_str})
         except PermissionError:
             pass
 
@@ -269,5 +301,7 @@ def browse_local() -> tuple[Response, int]:
             "folders": folders,
             "files": files,  # Only MCAP files
             "mcap_count": mcap_count,
+            "total_mcap_count": mcap_count + sum(folder_mcap_counts.values()),
+            "already_uploaded": direct_uploaded + sum(folder_uploaded_counts.values()),
         }
     ), 200

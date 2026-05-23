@@ -10,22 +10,22 @@ class TestMainRoutes:
     """Tests for main page routes."""
 
     def test_index_page(self, client: FlaskClient) -> None:
-        """Test that index page loads successfully."""
+        """Test that index page serves the React SPA shell."""
         response = client.get("/")
         assert response.status_code == 200
-        assert b"Upload MCAP Files" in response.data
+        assert b'<div id="root">' in response.data
 
     def test_files_page(self, client: FlaskClient) -> None:
-        """Test that files page loads successfully."""
+        """Test that files page serves the React SPA shell."""
         response = client.get("/files")
         assert response.status_code == 200
-        assert b"S3 File Browser" in response.data
+        assert b'<div id="root">' in response.data
 
     def test_settings_page(self, client: FlaskClient) -> None:
-        """Test that settings page loads successfully."""
+        """Test that settings page serves the React SPA shell."""
         response = client.get("/settings")
         assert response.status_code == 200
-        assert b"Settings" in response.data
+        assert b'<div id="root">' in response.data
 
 
 class TestSettingsAPI:
@@ -138,7 +138,6 @@ class TestUploadAPI:
 
         data = json.loads(response.data)
         assert "job_id" in data
-        assert "files" in data
         assert data["status"] == "analyzing"
 
     def test_get_status_not_found(self, client: FlaskClient) -> None:
@@ -200,49 +199,6 @@ class TestFilesAPI:
         response = client.get("/api/files/list")
         assert response.status_code == 400
 
-    def test_search_no_query(self, client: FlaskClient) -> None:
-        """Test search without query parameter."""
-        # Ensure bucket is set for this test
-        client.put(
-            "/api/settings",
-            data=json.dumps({"s3_bucket": "test-bucket"}),
-            content_type="application/json",
-        )
-
-        response = client.get("/api/files/search")
-        assert response.status_code == 400
-
-    @patch("app.routes.files.s3_service")
-    def test_search_success(self, mock_s3: MagicMock, client: FlaskClient) -> None:
-        """Test successful file search."""
-        # Ensure bucket is set
-        client.put(
-            "/api/settings",
-            data=json.dumps({"s3_bucket": "test-bucket"}),
-            content_type="application/json",
-        )
-
-        mock_s3.create_s3_client.return_value = MagicMock()
-        mock_s3.list_bucket_objects.return_value = {
-            "success": True,
-            "bucket": "test-bucket",
-            "prefix": "",
-            "folders": [],
-            "files": [
-                {"name": "test_file.mcap", "key": "path/test_file.mcap", "size": 1000},
-                {"name": "other.mcap", "key": "path/other.mcap", "size": 2000},
-            ],
-            "error": None,
-        }
-
-        response = client.get("/api/files/search?query=test")
-        assert response.status_code == 200
-
-        data = json.loads(response.data)
-        assert data["success"] is True
-        assert len(data["files"]) == 1
-        assert data["files"][0]["name"] == "test_file.mcap"
-
     def test_get_file_info_no_key(self, client: FlaskClient) -> None:
         """Test getting file info without key parameter."""
         response = client.get("/api/files/info")
@@ -253,10 +209,10 @@ class TestLogsAPI:
     """Tests for logs API endpoints."""
 
     def test_logs_page(self, client: FlaskClient) -> None:
-        """Test that logs page loads successfully."""
+        """Test that logs page serves the React SPA shell."""
         response = client.get("/logs")
         assert response.status_code == 200
-        assert b"Application Logs" in response.data
+        assert b'<div id="root">' in response.data
 
     def test_get_entries(self, client: FlaskClient) -> None:
         """Test getting log entries."""

@@ -23,15 +23,54 @@ upload_bp = Blueprint("upload", __name__)
 
 # Store for SSE clients per job
 _sse_queues: dict[str, list[deque[dict[str, Any]]]] = {}
+_sse_events: dict[str, threading.Event] = {}  # Events to signal new data (replaces polling)
+_sse_timestamps: dict[str, float] = {}  # Track last activity for TTL cleanup
 _sse_lock = threading.Lock()
+
+# Configuration
+SSE_QUEUE_TTL_SECONDS = 3600  # Clean up queues after 1 hour of inactivity
+SSE_HEARTBEAT_INTERVAL_SECONDS = 15  # Send heartbeat every 15 seconds
+
+
+def _cleanup_old_sse_queues() -> int:
+    """Clean up SSE queues that haven't been accessed recently.
+
+    Returns:
+        Number of queues removed
+    """
+    now = time.time()
+    removed = 0
+    with _sse_lock:
+        expired = [
+            job_id
+            for job_id, timestamp in _sse_timestamps.items()
+            if now - timestamp > SSE_QUEUE_TTL_SECONDS
+        ]
+        for job_id in expired:
+            _sse_queues.pop(job_id, None)
+            _sse_events.pop(job_id, None)
+            _sse_timestamps.pop(job_id, None)
+            removed += 1
+    return removed
 
 
 def send_sse_event(job_id: str, data: dict[str, Any]) -> None:
-    """Send an SSE event to all clients listening for a job."""
+    """Send an SSE event to all clients listening for a job.
+
+    This wakes up all waiting SSE generators via the event signal,
+    avoiding busy-wait polling.
+    """
     with _sse_lock:
         queues = _sse_queues.get(job_id, [])
         for q in queues:
             q.append(data)
+
+        # Update last activity timestamp
+        _sse_timestamps[job_id] = time.time()
+
+        # Signal waiting threads that new data is available
+        if job_id in _sse_events:
+            _sse_events[job_id].set()
 
 
 def _make_analysis_callback(
@@ -128,7 +167,6 @@ def analyze_files() -> tuple[Response, int]:
             "job_id": job.job_id,
             "status": "analyzing",
             "total_files": len(job.files),
-            "files": [f.to_dict() for f in job.files],
         }
     ), 202
 
@@ -161,8 +199,11 @@ def start_upload(job_id: str) -> tuple[Response, int]:
             skip_duplicates = data.get("skip_duplicates", True)
 
     def progress_callback(job: UploadJob) -> None:
-        """Send progress updates via SSE."""
-        send_sse_event(job.job_id, job.to_dict())
+        """Send progress updates via SSE — lightweight during upload, full at completion."""
+        if job.status in (UploadStatus.COMPLETED, UploadStatus.FAILED, UploadStatus.CANCELLED):
+            send_sse_event(job.job_id, job.to_dict())
+        else:
+            send_sse_event(job.job_id, job.to_progress_dict())
 
     # Start upload in background thread
     def run_upload() -> None:
@@ -185,6 +226,9 @@ def start_upload(job_id: str) -> tuple[Response, int]:
 def get_progress(job_id: str) -> Response:
     """Stream progress updates for a job via Server-Sent Events.
 
+    Uses event-driven signaling (instead of polling) and periodic heartbeats
+    to efficiently detect client disconnects.
+
     Args:
         job_id: The job ID to monitor
 
@@ -194,46 +238,132 @@ def get_progress(job_id: str) -> Response:
     manager = get_upload_manager()
 
     def generate() -> Generator[str, None, None]:
-        # Create a queue for this client
+        # Create a queue for this client and an event for signaling
         queue: deque[dict[str, Any]] = deque()
+        event = threading.Event()
+
         with _sse_lock:
             if job_id not in _sse_queues:
                 _sse_queues[job_id] = []
             _sse_queues[job_id].append(queue)
+            _sse_events[job_id] = event
+            _sse_timestamps[job_id] = time.time()
+
+        # Periodic cleanup of old queues
+        _cleanup_old_sse_queues()
 
         try:
             # Send initial state
             job = manager.get_job(job_id)
+            scan_job = manager.get_scan_job(job_id) if not job else None
             if job:
-                yield f"data: {json.dumps(job.to_dict())}\n\n"
+                if job.status in (
+                    UploadStatus.COMPLETED,
+                    UploadStatus.FAILED,
+                    UploadStatus.CANCELLED,
+                ):
+                    yield f"data: {json.dumps(job.to_dict())}\n\n"
+                else:
+                    yield f"data: {json.dumps(job.to_progress_dict())}\n\n"
+                    # Replay per-file states for files already past PENDING.
+                    # Covers the race window where ANALYZING events fired
+                    # before the EventSource connected.
+                    analysis_complete = job.status.value in ("ready", "failed")
+                    for fs in job.files:
+                        if fs.status != UploadStatus.PENDING:
+                            replay = {
+                                "type": "analysis_progress",
+                                "job_id": job.job_id,
+                                "job_status": job.status.value,
+                                "file": fs.to_dict(),
+                                "total_files": len(job.files),
+                                "analysis_complete": analysis_complete,
+                            }
+                            yield f"data: {json.dumps(replay)}\n\n"
+            elif scan_job:
+                yield f"data: {json.dumps({'type': 'scan_initial', 'status': scan_job.status})}\n\n"
 
-            # Stream updates
+            last_heartbeat_time = time.time()
+
+            # Stream updates with event-driven waiting (no polling)
             while True:
-                # Check for updates
+                # Process all queued events
                 while queue:
                     data = queue.popleft()
                     yield f"data: {json.dumps(data)}\n\n"
+                    last_heartbeat_time = time.time()
 
-                    # Check if job is complete
+                    # Check if job is complete (upload jobs)
                     if data.get("status") in ("completed", "failed", "cancelled"):
-                        return
+                        # For scan events, check the type field
+                        if data.get("type") == "scan_complete":
+                            return
+                        # For upload jobs (no type field)
+                        if not data.get("type"):
+                            return
 
-                # Small delay to prevent busy waiting
-                time.sleep(0.1)
+                # Send heartbeat if no activity for a while
+                now = time.time()
+                if now - last_heartbeat_time > SSE_HEARTBEAT_INTERVAL_SECONDS:
+                    yield ": heartbeat\n\n"  # Comment line, ignored by EventSource
+                    last_heartbeat_time = now
 
-                # Check if job still exists
+                # Wait for signal (blocking, no CPU waste) with timeout for heartbeat
+                event.wait(timeout=SSE_HEARTBEAT_INTERVAL_SECONDS)
+                event.clear()
+
+                # Check if job still exists (upload or scan)
                 job = manager.get_job(job_id)
-                if not job:
+                scan_job = manager.get_scan_job(job_id) if not job else None
+                if not job and not scan_job:
                     yield 'data: {"error": "Job not found"}\n\n'
                     return
 
+                # Check if scan job reached terminal state before client connected
+                # (race condition: fast scans finish before EventSource opens,
+                # so events were sent to empty queues and dropped)
+                if scan_job and scan_job.status in (
+                    "completed",
+                    "failed",
+                    "cancelled",
+                ):
+                    # Replay missed folder results so frontend gets the data
+                    for folder_data in scan_job.scanned_folders:
+                        replay_event = {
+                            "type": "scan_folder_complete",
+                            "folder": folder_data,
+                            "folders_scanned": scan_job.folders_scanned,
+                            "folders_total": scan_job.folders_total,
+                            "running_totals": {
+                                "total_files_found": scan_job.total_files_found,
+                                "total_already_uploaded": scan_job.total_already_uploaded,
+                                "total_size": scan_job.total_size,
+                            },
+                        }
+                        yield f"data: {json.dumps(replay_event)}\n\n"
+
+                    terminal_data = {
+                        "type": "scan_complete",
+                        "status": scan_job.status,
+                        "folders_scanned": scan_job.folders_scanned,
+                        "folders_total": scan_job.folders_total,
+                        "total_files_found": scan_job.total_files_found,
+                        "total_already_uploaded": scan_job.total_already_uploaded,
+                        "total_size": scan_job.total_size,
+                    }
+                    yield f"data: {json.dumps(terminal_data)}\n\n"
+                    return
+
         finally:
-            # Clean up queue
+            # Clean up queue and event
             with _sse_lock:
                 if job_id in _sse_queues and queue in _sse_queues[job_id]:
                     _sse_queues[job_id].remove(queue)
                     if not _sse_queues[job_id]:
-                        del _sse_queues[job_id]
+                        # Last client disconnected, remove event too
+                        _sse_queues.pop(job_id, None)
+                        _sse_events.pop(job_id, None)
+                        # Keep timestamp for TTL cleanup
 
     return Response(
         generate(),
@@ -265,6 +395,68 @@ def get_status(job_id: str) -> tuple[Response, int]:
     return jsonify(job.to_dict()), 200
 
 
+@upload_bp.route("/results/<job_id>", methods=["GET"])
+def get_results(job_id: str) -> tuple[Response, int]:
+    """Get paginated results for a completed job.
+
+    For large jobs (>1000 files), results are stored in database and retrieved
+    in pages to prevent memory overload and large response payloads.
+
+    Args:
+        job_id: The job ID to get results for
+
+    Query parameters:
+        page: Page number (default: 1)
+        per_page: Results per page (default: 100, max: 500)
+
+    Returns:
+        JSON response with paginated file results and job metadata
+    """
+    from app.services.job_storage import get_job_storage
+
+    manager = get_upload_manager()
+    storage = get_job_storage()
+
+    # Try to get from database first (for large jobs)
+    db_job = storage.get_job(job_id)
+    if db_job:
+        page = request.args.get("page", 1, type=int)
+        per_page = min(request.args.get("per_page", 100, type=int), 500)
+
+        results = storage.get_job_results(job_id, page=page, per_page=per_page)
+        results["job_metadata"] = db_job
+        return jsonify(results), 200
+
+    # Fall back to in-memory job (for small jobs)
+    job = manager.get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    # Return in-memory job with all files (small jobs only)
+    return jsonify(
+        {
+            "job_id": job_id,
+            "files": [f.to_dict() for f in job.files],
+            "pagination": {
+                "page": 1,
+                "per_page": len(job.files),
+                "total_files": len(job.files),
+                "total_pages": 1,
+                "has_next": False,
+                "has_prev": False,
+            },
+            "job_metadata": {
+                "job_id": job.job_id,
+                "status": job.status.value,
+                "total_files": len(job.files),
+                "files_uploaded": sum(1 for f in job.files if f.status == UploadStatus.COMPLETED),
+                "files_failed": job.files_failed,
+                "total_bytes": job.total_bytes,
+            },
+        }
+    ), 200
+
+
 @upload_bp.route("/active", methods=["GET"])
 def get_active_job() -> tuple[Response, int]:
     """Get the most recent active job (for state restoration on page refresh).
@@ -292,6 +484,27 @@ def get_active_job() -> tuple[Response, int]:
         return jsonify({"job_id": None, "job": None}), 200
 
 
+@upload_bp.route("/cleanup-sse", methods=["POST"])
+def cleanup_sse_queues() -> tuple[Response, int]:
+    """Clean up stale SSE queues and events.
+
+    This can be called periodically or manually to reclaim memory from
+    abandoned connections. Returns the number of queues removed.
+
+    Returns:
+        JSON response with cleanup statistics
+    """
+    removed = _cleanup_old_sse_queues()
+    return jsonify(
+        {
+            "success": True,
+            "queues_removed": removed,
+            "active_queues": len(_sse_queues),
+            "ttl_seconds": SSE_QUEUE_TTL_SECONDS,
+        }
+    ), 200
+
+
 @upload_bp.route("/cancel/<job_id>", methods=["POST"])
 def cancel_upload(job_id: str) -> tuple[Response, int]:
     """Cancel an upload job.
@@ -313,6 +526,8 @@ def cancel_upload(job_id: str) -> tuple[Response, int]:
                 "job": job.to_dict() if job else None,
             }
         ), 200
+    elif manager.cancel_scan_job(job_id):
+        return jsonify({"success": True, "job_id": job_id}), 200
     else:
         return jsonify({"error": "Job not found"}), 404
 
@@ -374,6 +589,68 @@ def scan_folder() -> tuple[Response, int]:
     ), 200
 
 
+@upload_bp.route("/scan-folder-async", methods=["POST"])
+def scan_folder_async() -> tuple[Response, int]:
+    """Start an async folder scan that streams results via SSE.
+
+    Request body:
+        folder_path: Path to the folder to scan
+
+    Returns:
+        JSON response with job_id (202 Accepted)
+    """
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    data = request.get_json()
+    if not data or "folder_path" not in data:
+        return jsonify({"error": "folder_path is required"}), 400
+
+    folder_path = Path(data["folder_path"])
+
+    if not folder_path.exists():
+        return jsonify({"error": f"Folder not found: {folder_path}"}), 404
+
+    if not folder_path.is_dir():
+        return jsonify({"error": f"Path is not a directory: {folder_path}"}), 400
+
+    cache_only: bool = data.get("cache_only", False)
+    excluded_subfolders: list[str] = data.get("excluded_subfolders", [])
+    excluded_files: list[str] = data.get("excluded_files", [])
+
+    settings = get_settings()
+    manager = get_upload_manager()
+
+    scan_job = manager.create_scan_job(
+        str(folder_path.absolute()),
+        excluded_subfolders=excluded_subfolders,
+        excluded_files=excluded_files,
+    )
+
+    def scan_progress_callback(job_id: str, event_data: dict[str, Any]) -> None:
+        send_sse_event(job_id, event_data)
+
+    def run_scan() -> None:
+        manager.scan_folder_async(
+            scan_job.job_id,
+            settings.s3_bucket,
+            settings.aws_profile,
+            settings.aws_region,
+            progress_callback=scan_progress_callback,
+            cache_only=cache_only,
+        )
+
+    thread = threading.Thread(target=run_scan, daemon=True)
+    thread.start()
+
+    return jsonify(
+        {
+            "job_id": scan_job.job_id,
+            "status": "scanning",
+        }
+    ), 202
+
+
 @upload_bp.route("/bulk-analyze", methods=["POST"])
 def bulk_analyze() -> tuple[Response, int]:
     """Bulk analyze files with pre-filtering and optional auto-upload.
@@ -421,8 +698,11 @@ def bulk_analyze() -> tuple[Response, int]:
             }
         ), 200
 
-    # When force-reuploading, analyze ALL files (not just non-duplicates)
-    job_files = file_paths if not skip_duplicates else files_to_analyze
+    # Always include all user-selected files in the job. The pipeline marks
+    # already-uploaded files as "skipped" when skip_duplicates=True rather than
+    # silently dropping them — an empty job_files here causes a 0-file job that
+    # completes instantly and bypasses the upload screen entirely.
+    job_files = file_paths
 
     # Create job with files that need analysis (no temp_dir - direct file access)
     job = manager.create_job(job_files, auto_upload=auto_upload)
@@ -430,53 +710,47 @@ def bulk_analyze() -> tuple[Response, int]:
     analysis_progress_callback = _make_analysis_callback(job.job_id)
 
     def upload_progress_callback(job: UploadJob) -> None:
-        """Send upload progress updates via SSE."""
-        send_sse_event(job.job_id, job.to_dict())
+        """Send upload progress updates via SSE — lightweight during upload, full at completion."""
+        if job.status in (UploadStatus.COMPLETED, UploadStatus.FAILED, UploadStatus.CANCELLED):
+            send_sse_event(job.job_id, job.to_dict())
+        else:
+            send_sse_event(job.job_id, job.to_progress_dict())
 
-    # Start analysis in background thread
-    def run_bulk_analysis() -> None:
-        manager.analyze_job_async(
-            job.job_id,
-            settings.aws_profile,
-            settings.aws_region,
-            settings.s3_bucket,
-            progress_callback=analysis_progress_callback,
-        )
-
-        # Send analysis complete event
-        final_job = manager.get_job(job.job_id)
-        if final_job:
-            send_sse_event(
+    # Start in background thread
+    def run_bulk_job() -> None:
+        if auto_upload:
+            # Pipeline: analyze each file and upload immediately as it's ready.
+            # Uploads start flowing while remaining files are still being parsed.
+            manager.analyze_and_upload_pipeline(
                 job.job_id,
-                {
-                    "type": "analysis_complete",
-                    "job": final_job.to_dict(),
-                    "auto_upload": final_job.auto_upload,
-                },
+                settings.aws_profile,
+                settings.aws_region,
+                settings.s3_bucket,
+                skip_duplicates=skip_duplicates,
+                analysis_callback=analysis_progress_callback,
+                upload_callback=upload_progress_callback,
             )
-
-            # Auto-upload if enabled and analysis succeeded
-            if final_job.auto_upload and final_job.status == UploadStatus.READY:
+        else:
+            # Analysis only — user will review results before starting upload.
+            manager.analyze_job_async(
+                job.job_id,
+                settings.aws_profile,
+                settings.aws_region,
+                settings.s3_bucket,
+                progress_callback=analysis_progress_callback,
+            )
+            final_job = manager.get_job(job.job_id)
+            if final_job:
                 send_sse_event(
                     job.job_id,
                     {
-                        "type": "auto_upload_starting",
-                        "job_id": job.job_id,
+                        "type": "analysis_complete",
+                        "job": final_job.to_dict(),
+                        "auto_upload": False,
                     },
                 )
-                manager.start_upload(
-                    job.job_id,
-                    settings.aws_profile,
-                    settings.aws_region,
-                    settings.s3_bucket,
-                    skip_duplicates=skip_duplicates,
-                    progress_callback=upload_progress_callback,
-                )
-            elif final_job.auto_upload:
-                # All files failed analysis — send terminal status so frontend doesn't hang
-                send_sse_event(job.job_id, final_job.to_dict())
 
-    thread = threading.Thread(target=run_bulk_analysis, daemon=True)
+    thread = threading.Thread(target=run_bulk_job, daemon=True)
     thread.start()
 
     return jsonify(
@@ -486,6 +760,5 @@ def bulk_analyze() -> tuple[Response, int]:
             "total_files": len(job.files),
             "pre_filter_stats": pre_filter_stats,
             "auto_upload": auto_upload,
-            "files": [f.to_dict() for f in job.files],
         }
     ), 202

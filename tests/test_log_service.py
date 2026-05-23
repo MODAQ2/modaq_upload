@@ -113,9 +113,7 @@ class TestLogServiceWrite:
         entry = json.loads(log_file.read_text().strip())
         assert entry["level"] == "ERROR"
 
-    def test_multiple_entries_appended(
-        self, log_service: LogService, _mock_settings: Any
-    ) -> None:
+    def test_multiple_entries_appended(self, log_service: LogService, _mock_settings: Any) -> None:
         """Test that multiple log calls append to the same file."""
         with _mock_settings:
             log_service.info("app", "event1", "First")
@@ -127,9 +125,7 @@ class TestLogServiceWrite:
         lines = [line for line in log_file.read_text().strip().split("\n") if line]
         assert len(lines) == 3
 
-    def test_no_metadata_omits_field(
-        self, log_service: LogService, _mock_settings: Any
-    ) -> None:
+    def test_no_metadata_omits_field(self, log_service: LogService, _mock_settings: Any) -> None:
         """Test that metadata field is omitted when not provided."""
         with _mock_settings:
             log_service.info("app", "test", "No metadata")
@@ -206,9 +202,7 @@ class TestLogServiceRead:
         assert result["total"] == 1
         assert result["entries"][0]["event"] == "event1"
 
-    def test_read_entries_invalid_date(
-        self, log_service: LogService, _mock_settings: Any
-    ) -> None:
+    def test_read_entries_invalid_date(self, log_service: LogService, _mock_settings: Any) -> None:
         """Test that an invalid date returns empty results."""
         with _mock_settings:
             result = log_service.read_log_entries(date="not-a-date")
@@ -284,9 +278,7 @@ class TestLogServiceStats:
         assert stats["total_entries"] == 0
         assert stats["file_count"] == 0
 
-    def test_stats_includes_csv_count(
-        self, log_service: LogService, _mock_settings: Any
-    ) -> None:
+    def test_stats_includes_csv_count(self, log_service: LogService, _mock_settings: Any) -> None:
         """Test that stats include csv_count."""
         with _mock_settings:
             log_service.info("app", "test", "Entry")
@@ -386,9 +378,7 @@ class TestHivePartitioning:
         result = LogService._extract_date_from_hive_path(path)
         assert result is None
 
-    def test_log_writes_to_hive_path(
-        self, log_service: LogService, _mock_settings: Any
-    ) -> None:
+    def test_log_writes_to_hive_path(self, log_service: LogService, _mock_settings: Any) -> None:
         """Test that log() writes to a hive-partitioned events.jsonl."""
         log_dir: Path = log_service._test_settings_mock.log_directory  # type: ignore[attr-defined]
 
@@ -471,9 +461,7 @@ class TestJobSaveCsv:
         mock_job.files = [mock_file]
         return mock_job
 
-    def test_save_job_csv_creates_file(
-        self, log_service: LogService, _mock_settings: Any
-    ) -> None:
+    def test_save_job_csv_creates_file(self, log_service: LogService, _mock_settings: Any) -> None:
         """Test that save_job_csv creates a CSV at the correct hive path."""
         log_dir: Path = log_service._test_settings_mock.log_directory  # type: ignore[attr-defined]
         job_id = "a1b2c3d4-5678-9abc-def0-1234567890ab"
@@ -489,9 +477,7 @@ class TestJobSaveCsv:
         assert result_path.name.endswith(".csv")
         assert result_path.exists()
 
-    def test_save_job_csv_columns(
-        self, log_service: LogService, _mock_settings: Any
-    ) -> None:
+    def test_save_job_csv_columns(self, log_service: LogService, _mock_settings: Any) -> None:
         """Test that the CSV has all 14 expected columns."""
         job_id = "test-job-id-1234"
         completed_at = datetime(2026, 2, 8, 12, 0, 0, tzinfo=UTC)
@@ -522,9 +508,7 @@ class TestJobSaveCsv:
         ]
         assert header == expected_columns
 
-    def test_save_job_csv_data_row(
-        self, log_service: LogService, _mock_settings: Any
-    ) -> None:
+    def test_save_job_csv_data_row(self, log_service: LogService, _mock_settings: Any) -> None:
         """Test that the CSV has a data row for each file."""
         job_id = "test-job-id"
         completed_at = datetime(2026, 2, 8, 12, 0, 0, tzinfo=UTC)
