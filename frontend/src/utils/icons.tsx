@@ -4,36 +4,38 @@
  */
 
 import {
-  File,
-  Folder,
-  Check,
-  ChevronRight,
-  X,
-  AlertTriangle,
   AlertCircle,
-  Info,
+  AlertTriangle,
+  Check,
   CheckCircle,
-  ChevronUp,
   ChevronDown,
-  Shield,
-  Upload,
-  Download,
-  Search,
-  Filter,
-  MoreVertical,
-  Trash2,
-  Settings,
-  RefreshCw,
-  XCircle,
-  Loader2,
-  Plus,
-  Minus,
-  Cloud,
+  ChevronRight,
+  ChevronUp,
   Circle,
+  Cloud,
+  Download,
+  ExternalLink,
+  File,
+  Filter,
+  Folder,
+  GitBranch,
+  Info,
+  Loader2,
   Lock,
-  Power,
   type LucideProps,
-} from "lucide-react";
+  Minus,
+  MoreVertical,
+  Plus,
+  Power,
+  RefreshCw,
+  Search,
+  Settings,
+  Shield,
+  Trash2,
+  Upload,
+  X,
+  XCircle,
+} from 'lucide-react';
 
 // Re-export with consistent names
 export const FileIcon = File;
@@ -58,11 +60,13 @@ export const SettingsIcon = Settings;
 export const RefreshIcon = RefreshCw;
 export const XCircleIcon = XCircle;
 export const SpinnerIcon = Loader2;
+export const ExternalLinkIcon = ExternalLink;
 export const PlusIcon = Plus;
 export const MinusIcon = Minus;
 export const CloudIcon = Cloud;
 export const CircleIcon = Circle;
 export const LockIcon = Lock;
+export const GitBranchIcon = GitBranch;
 export const PowerIcon = Power;
 
 // Export type for icon props

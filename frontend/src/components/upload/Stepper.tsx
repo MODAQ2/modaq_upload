@@ -3,14 +3,14 @@
  * Wrapper around the unified Stepper component.
  */
 
-import Stepper from "../common/Stepper.tsx";
-import type { UploadStep } from "../../stores/uploadStore.ts";
+import type { UploadStep } from '../../stores/uploadStore.ts';
+import Stepper from '../common/Stepper.tsx';
 
 const steps = [
-  { number: 1, label: "Select" },
-  { number: 2, label: "Review" },
-  { number: 3, label: "Upload" },
-  { number: 4, label: "Complete" },
+  { number: 1, label: 'Select' },
+  { number: 2, label: 'Review' },
+  { number: 3, label: 'Upload' },
+  { number: 4, label: 'Complete' },
 ];
 
 interface UploadStepperProps {

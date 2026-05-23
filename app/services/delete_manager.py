@@ -2,8 +2,6 @@
 
 import hashlib
 import os
-import threading
-import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -13,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.cache_service import get_cache_service
+from app.services.job_models import BaseFileState, BaseJob, BaseJobManager
 from app.services.log_service import get_log_service
 from app.services.s3_service import create_s3_client, get_object_metadata
 
@@ -32,28 +31,22 @@ class DeleteStatus(Enum):
 
 
 @dataclass
-class FileDeleteState:
+class FileDeleteState(BaseFileState):
     """State for a single file in a delete job."""
 
-    filename: str
-    local_path: str
-    file_size: int
-    s3_path: str
-    s3_bucket: str
+    s3_path: str = ""
+    s3_bucket: str = ""
     writable: bool = True
     status: DeleteStatus = DeleteStatus.PENDING
     local_md5: str = ""
     s3_etag: str = ""
     s3_size: int = 0
     verification: str = ""
-    error_message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary for API responses."""
         return {
-            "filename": self.filename,
-            "local_path": self.local_path,
-            "file_size": self.file_size,
+            **self._base_dict(),
             "s3_path": self.s3_path,
             "s3_bucket": self.s3_bucket,
             "writable": self.writable,
@@ -62,33 +55,25 @@ class FileDeleteState:
             "s3_etag": self.s3_etag,
             "s3_size": self.s3_size,
             "verification": self.verification,
-            "error_message": self.error_message,
         }
 
 
 @dataclass
-class DeleteJob:
+class DeleteJob(BaseJob):
     """A delete job tracking multiple files."""
 
-    job_id: str
-    files: list[FileDeleteState] = field(default_factory=list)
     status: str = "pending"
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     started_at: str | None = None
     completed_at: str | None = None
-    cancelled: bool = False
-    lock: threading.Lock = field(default_factory=threading.Lock)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary for API responses."""
         with self.lock:
-            status_counts: dict[str, int] = {}
-            total_deleted_size = 0
-            for f in self.files:
-                status_counts[f.status.value] = status_counts.get(f.status.value, 0) + 1
-                if f.status == DeleteStatus.DELETED:
-                    total_deleted_size += f.file_size
-
+            status_counts = self._compute_status_counts()
+            total_deleted_size = sum(
+                f.file_size for f in self.files if f.status == DeleteStatus.DELETED
+            )
             return {
                 "job_id": self.job_id,
                 "status": self.status,
@@ -105,20 +90,16 @@ class DeleteJob:
     def to_progress_dict(self) -> dict[str, Any]:
         """Lightweight progress for SSE streaming."""
         with self.lock:
-            status_counts: dict[str, int] = {}
-            total_deleted_size = 0
-            for f in self.files:
-                status_counts[f.status.value] = status_counts.get(f.status.value, 0) + 1
-                if f.status == DeleteStatus.DELETED:
-                    total_deleted_size += f.file_size
-
+            status_counts = self._compute_status_counts()
+            total_deleted_size = sum(
+                f.file_size for f in self.files if f.status == DeleteStatus.DELETED
+            )
             files_processed = sum(
                 1
                 for f in self.files
                 if f.status
                 not in (DeleteStatus.PENDING, DeleteStatus.VERIFYING, DeleteStatus.DELETING)
             )
-
             return {
                 "job_id": self.job_id,
                 "status": self.status,
@@ -164,11 +145,11 @@ def is_multipart_etag(etag: str) -> bool:
     return "-" in etag
 
 
-class DeleteManager:
+class DeleteManager(BaseJobManager):
     """Manages local file deletion jobs with MD5 verification against S3."""
 
     def __init__(self, batch_config: dict[str, Any] | None = None) -> None:
-        self.jobs: dict[str, DeleteJob] = {}
+        super().__init__()
 
         # Load batch processing configuration
         if batch_config is None:
@@ -203,7 +184,7 @@ class DeleteManager:
         Returns:
             A new DeleteJob with files matched against the cache
         """
-        job_id = str(uuid.uuid4())
+        job_id = self._new_job_id()
         job = DeleteJob(job_id=job_id)
         cache = get_cache_service()
         folder = Path(folder_path)
@@ -243,7 +224,7 @@ class DeleteManager:
                 )
                 job.files.append(file_state)
 
-        self.jobs[job_id] = job
+        self._register_job(job)
         return job
 
     def start_delete_job(
@@ -411,7 +392,7 @@ class DeleteManager:
 
             # Process verification in batches
             def check_cancelled() -> bool:
-                return job.cancelled
+                return bool(job.cancelled)
 
             # Create a wrapper that uses _verify_batch
             def process_batch_fn(
@@ -661,21 +642,6 @@ class DeleteManager:
 
         if progress_callback:
             progress_callback(job)
-
-    def cancel_job(self, job_id: str) -> bool:
-        """Cancel a delete job.
-
-        Args:
-            job_id: The job to cancel
-
-        Returns:
-            True if job was found and cancelled
-        """
-        job = self.jobs.get(job_id)
-        if not job:
-            return False
-        job.cancelled = True
-        return True
 
     def get_job(self, job_id: str) -> DeleteJob | None:
         """Retrieve a delete job by ID."""

@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { ChevronRightIcon } from "../../utils/icons.tsx";
+import { useEffect, useRef } from 'react';
+import { ChevronRightIcon } from '../../utils/icons.tsx';
 
 interface BreadcrumbItem {
   label: string;
@@ -19,7 +19,7 @@ export default function Breadcrumb({ items }: BreadcrumbProps) {
     if (el) {
       el.scrollLeft = el.scrollWidth;
     }
-  }, [items]);
+  }, []);
 
   return (
     <nav
@@ -30,12 +30,17 @@ export default function Breadcrumb({ items }: BreadcrumbProps) {
       {items.map((item, index) => {
         const isLast = index === items.length - 1;
         return (
-          <span key={index} className="flex items-center flex-shrink-0">
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: static list, index is stable
+            key={index}
+            className="flex items-center flex-shrink-0"
+          >
             {index > 0 && <ChevronRightIcon className="w-4 h-4 mx-1 text-gray-400" />}
             {isLast || !item.onClick ? (
-              <span className={isLast ? "text-gray-900 font-medium" : ""}>{item.label}</span>
+              <span className={isLast ? 'text-gray-900 font-medium' : ''}>{item.label}</span>
             ) : (
               <button
+                type="button"
                 onClick={item.onClick}
                 className="hover:text-nlr-blue hover:underline"
               >

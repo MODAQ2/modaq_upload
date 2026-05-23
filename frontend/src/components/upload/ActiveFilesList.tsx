@@ -11,11 +11,11 @@
  * overwhelming the UI with thousands of rows.
  */
 
-import type { FileUploadState } from "../../types/api.ts";
-import { formatBytes } from "../../utils/format/bytes.ts";
-import ProgressBar from "../common/ProgressBar.tsx";
-import Spinner from "../common/Spinner.tsx";
-import { CheckIcon, XIcon, WarningIcon } from "../../utils/icons.tsx";
+import type { FileUploadState } from '../../types/api.ts';
+import { formatBytes } from '../../utils/format/bytes.ts';
+import { CheckIcon, WarningIcon, XIcon } from '../../utils/icons.tsx';
+import ProgressBar from '../common/ProgressBar.tsx';
+import Spinner from '../common/Spinner.tsx';
 
 interface ActiveFilesListProps {
   /** Currently active files (max 8) */
@@ -60,24 +60,22 @@ function ActiveFileCard({ file }: { file: FileUploadState }) {
           </div>
           <p className="text-xs text-gray-500 mt-0.5">
             {formatBytes(file.file_size)}
-            {file.status === "uploading" && file.bytes_uploaded > 0 && (
-              <span className="ml-2">
-                {formatBytes(file.bytes_uploaded)} uploaded
-              </span>
+            {file.status === 'uploading' && file.bytes_uploaded > 0 && (
+              <span className="ml-2">{formatBytes(file.bytes_uploaded)} uploaded</span>
             )}
           </p>
         </div>
       </div>
 
       {/* Progress bar for uploading files */}
-      {file.status === "uploading" && (
+      {file.status === 'uploading' && (
         <div className="mt-2">
           <ProgressBar percent={file.progress_percent} color="bg-nlr-blue" />
         </div>
       )}
 
       {/* Error message for failed files */}
-      {file.status === "failed" && file.error_message && (
+      {file.status === 'failed' && file.error_message && (
         <div className="mt-2 text-xs text-red-600 bg-red-50 rounded px-2 py-1">
           {file.error_message}
         </div>
@@ -88,15 +86,15 @@ function ActiveFileCard({ file }: { file: FileUploadState }) {
 
 function getStatusIcon(status: string) {
   switch (status) {
-    case "uploading":
+    case 'uploading':
       return <Spinner size="sm" />;
-    case "completed":
+    case 'completed':
       return <CheckIcon className="w-4 h-4 text-green-600 flex-shrink-0" />;
-    case "failed":
+    case 'failed':
       return <XIcon className="w-4 h-4 text-red-600 flex-shrink-0" />;
-    case "skipped":
+    case 'skipped':
       return <WarningIcon className="w-4 h-4 text-yellow-600 flex-shrink-0" />;
-    case "analyzing":
+    case 'analyzing':
       return <Spinner size="sm" />;
     default:
       return null;

@@ -10,7 +10,7 @@
  * - Clean error handling and connection cleanup
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef } from 'react';
 
 export interface UseSSEOptions {
   /** URL to connect to. Pass `null` to stay disconnected. */

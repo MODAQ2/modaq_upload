@@ -6,9 +6,9 @@
  * - Summary: info blurb + Download CSV + Upload More
  */
 
-import { Link } from "react-router-dom";
-import type { UploadPhase } from "../../types/upload.ts";
-import { ChevronRightIcon, XCircleIcon, DownloadIcon, UploadIcon } from "../../utils/icons.tsx";
+import { Link } from 'react-router-dom';
+import type { UploadPhase } from '../../types/upload.ts';
+import { ChevronRightIcon, DownloadIcon, UploadIcon, XCircleIcon } from '../../utils/icons.tsx';
 
 interface UploadFooterProps {
   phase: UploadPhase;
@@ -38,7 +38,7 @@ export default function UploadFooter({
   onDownloadCsv,
   onUploadMore,
 }: UploadFooterProps) {
-  if (phase === "review") {
+  if (phase === 'review') {
     return (
       <div className="flex items-center justify-between">
         <button
@@ -56,14 +56,14 @@ export default function UploadFooter({
             bg-nlr-blue text-white hover:bg-blue-700
             disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
         >
-          Start Upload ({selectedNewCount.toLocaleString()} file{selectedNewCount !== 1 ? "s" : ""})
+          Start Upload ({selectedNewCount.toLocaleString()} file{selectedNewCount !== 1 ? 's' : ''})
           <ChevronRightIcon className="w-4 h-4 ml-1 inline-block" strokeWidth={2.5} />
         </button>
       </div>
     );
   }
 
-  if (phase === "uploading") {
+  if (phase === 'uploading') {
     return (
       <div className="flex justify-center pt-2">
         {isRunning && (
@@ -84,8 +84,11 @@ export default function UploadFooter({
   return (
     <div className="space-y-3 pt-2">
       <p className="text-xs text-gray-500 text-center">
-        These results have been saved and can be reviewed anytime on the{" "}
-        <Link to="/logs" className="text-nlr-blue hover:underline font-medium">History</Link> page.
+        These results have been saved and can be reviewed anytime on the{' '}
+        <Link to="/logs" className="text-nlr-blue hover:underline font-medium">
+          History
+        </Link>{' '}
+        page.
       </p>
       <div className="flex items-center justify-center gap-4">
         <button

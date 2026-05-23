@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { useDebounce } from "../../hooks/useDebounce.ts";
+import { useCallback, useEffect, useState } from 'react';
+import { useDebounce } from '../../hooks/useDebounce.ts';
 
 export interface LogFilters {
   date: string;
@@ -9,14 +9,14 @@ export interface LogFilters {
 }
 
 const EMPTY_FILTERS: LogFilters = {
-  date: "",
-  level: "",
-  category: "",
-  search: "",
+  date: '',
+  level: '',
+  category: '',
+  search: '',
 };
 
-const LEVELS = ["All", "INFO", "WARNING", "ERROR"] as const;
-const CATEGORIES = ["All", "upload", "analysis", "settings", "app", "sync"] as const;
+const LEVELS = ['All', 'INFO', 'WARNING', 'ERROR'] as const;
+const CATEGORIES = ['All', 'upload', 'analysis', 'settings', 'app', 'sync'] as const;
 
 interface FilterBarProps {
   onFilterChange: (filters: LogFilters) => void;
@@ -41,7 +41,7 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
   };
 
   const hasActiveFilters =
-    filters.date !== "" || filters.level !== "" || filters.category !== "" || filters.search !== "";
+    filters.date !== '' || filters.level !== '' || filters.category !== '' || filters.search !== '';
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
@@ -55,7 +55,7 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
             id="log-date"
             type="date"
             value={filters.date}
-            onChange={(e) => updateFilter("date", e.target.value)}
+            onChange={(e) => updateFilter('date', e.target.value)}
             className="px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-nlr-blue focus:border-transparent"
           />
         </div>
@@ -68,11 +68,11 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
           <select
             id="log-level"
             value={filters.level}
-            onChange={(e) => updateFilter("level", e.target.value)}
+            onChange={(e) => updateFilter('level', e.target.value)}
             className="px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-nlr-blue focus:border-transparent bg-white"
           >
             {LEVELS.map((level) => (
-              <option key={level} value={level === "All" ? "" : level}>
+              <option key={level} value={level === 'All' ? '' : level}>
                 {level}
               </option>
             ))}
@@ -87,11 +87,11 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
           <select
             id="log-category"
             value={filters.category}
-            onChange={(e) => updateFilter("category", e.target.value)}
+            onChange={(e) => updateFilter('category', e.target.value)}
             className="px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-nlr-blue focus:border-transparent bg-white"
           >
             {CATEGORIES.map((cat) => (
-              <option key={cat} value={cat === "All" ? "" : cat}>
+              <option key={cat} value={cat === 'All' ? '' : cat}>
                 {cat}
               </option>
             ))}
@@ -107,7 +107,7 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
             id="log-search"
             type="text"
             value={filters.search}
-            onChange={(e) => updateFilter("search", e.target.value)}
+            onChange={(e) => updateFilter('search', e.target.value)}
             placeholder="Search messages..."
             className="px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-nlr-blue focus:border-transparent"
           />
@@ -116,6 +116,7 @@ export default function FilterBar({ onFilterChange }: FilterBarProps) {
         {/* Clear button */}
         {hasActiveFilters && (
           <button
+            type="button"
             onClick={clearFilters}
             className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
           >

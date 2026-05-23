@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
-import { XIcon } from "../../utils/icons.tsx";
+import { type ReactNode, useEffect, useRef } from 'react';
+import { XIcon } from '../../utils/icons.tsx';
 
 interface ModalProps {
   isOpen: boolean;
@@ -7,54 +7,71 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  maxWidth?: string;
+  /** When true, disables Escape key, backdrop click, and the × button (e.g. during an update). */
+  locked?: boolean;
 }
 
-export default function Modal({ isOpen, onClose, title, children, footer }: ModalProps) {
+export default function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  footer,
+  maxWidth = 'max-w-sm',
+  locked = false,
+}: ModalProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
 
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === 'Escape' && !locked) onClose();
     }
 
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose, locked]);
 
   if (!isOpen) return null;
 
   function handleBackdropClick(e: React.MouseEvent) {
-    if (e.target === backdropRef.current) onClose();
+    if (!locked && e.target === backdropRef.current) onClose();
   }
 
   return (
-    <div
-      ref={backdropRef}
-      className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center animate-[fadeIn_0.15s_ease-out]"
-      onClick={handleBackdropClick}
-      data-testid="modal-backdrop"
-    >
-      <div className="bg-white rounded-lg shadow-xl max-w-sm w-full mx-4 overflow-hidden">
-        {/* Header */}
-        <div className="bg-nlr-blue text-white px-6 py-4 flex justify-between items-center">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <button
-            onClick={onClose}
-            className="text-white hover:text-gray-200"
-            aria-label="Close modal"
-          >
-            <XIcon className="w-6 h-6" />
-          </button>
+    <>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay; Escape is handled by the document keydown listener above */}
+      <div
+        ref={backdropRef}
+        role="presentation"
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center animate-[fadeIn_0.15s_ease-out]"
+        onClick={handleBackdropClick}
+        data-testid="modal-backdrop"
+      >
+        <div className={`bg-white rounded-lg shadow-xl ${maxWidth} w-full mx-4 overflow-hidden`}>
+          {/* Header */}
+          <div className="bg-nlr-blue text-white px-6 py-4 flex justify-between items-center">
+            <h2 className="text-lg font-semibold">{title}</h2>
+            <button
+              type="button"
+              onClick={locked ? undefined : onClose}
+              disabled={locked}
+              className={`text-white ${locked ? 'opacity-30 cursor-not-allowed' : 'hover:text-gray-200'}`}
+              aria-label="Close modal"
+            >
+              <XIcon className="w-6 h-6" />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="px-6 py-5">{children}</div>
+
+          {/* Footer */}
+          {footer && <div className="bg-gray-50 px-6 py-3 flex justify-end">{footer}</div>}
         </div>
-
-        {/* Body */}
-        <div className="px-6 py-5">{children}</div>
-
-        {/* Footer */}
-        {footer && <div className="bg-gray-50 px-6 py-3 flex justify-end">{footer}</div>}
       </div>
-    </div>
+    </>
   );
 }

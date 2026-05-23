@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from 'react';
 
 export interface UseSortingResult<T extends string> {
   sortColumn: T;
@@ -32,12 +32,12 @@ export function useSorting<T extends string>(
       const bVal = b[sortColumn];
 
       let comparison = 0;
-      if (typeof aVal === "string" && typeof bVal === "string") {
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
         comparison = aVal.localeCompare(bVal);
-      } else if (typeof aVal === "number" && typeof bVal === "number") {
+      } else if (typeof aVal === 'number' && typeof bVal === 'number') {
         comparison = aVal - bVal;
       } else {
-        comparison = String(aVal ?? "").localeCompare(String(bVal ?? ""));
+        comparison = String(aVal ?? '').localeCompare(String(bVal ?? ''));
       }
 
       return ascending ? comparison : -comparison;

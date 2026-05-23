@@ -3,25 +3,25 @@
  */
 
 export type UnifiedStatus =
-  | "new"
-  | "already_uploaded"
-  | "queued"
-  | "in_progress"
-  | "completed"
-  | "skipped"
-  | "failed";
-export type UploadPhase = "review" | "uploading" | "summary";
-export type SortKey = "filename" | "folder" | "size" | "mtime" | "status";
-export type SortDir = "asc" | "desc";
+  | 'new'
+  | 'already_uploaded'
+  | 'queued'
+  | 'in_progress'
+  | 'completed'
+  | 'skipped'
+  | 'failed';
+export type UploadPhase = 'review' | 'uploading' | 'summary';
+export type SortKey = 'filename' | 'folder' | 'size' | 'mtime' | 'status';
+export type SortDir = 'asc' | 'desc';
 export type StatusFilter =
-  | "all"
-  | "new"
-  | "uploaded"
-  | "queued"
-  | "in_progress"
-  | "completed"
-  | "skipped"
-  | "failed";
+  | 'all'
+  | 'new'
+  | 'uploaded'
+  | 'queued'
+  | 'in_progress'
+  | 'completed'
+  | 'skipped'
+  | 'failed';
 
 export interface UnifiedFileRow {
   /** Stable key — the local filesystem path. */
@@ -44,6 +44,6 @@ export interface UnifiedFileRow {
   speed: number | null;
   /** Error message if failed. */
   error: string;
-  /** Position in the frozen sort array (set during upload phase). */
-  _frozenIndex?: number;
+  /** Configured file category (e.g. "data", "logs"). */
+  fileCategory: string;
 }

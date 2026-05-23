@@ -3,15 +3,15 @@
 // ── File status ──
 
 export type DeleteFileStatus =
-  | "pending"
-  | "scanning"
-  | "verifying"
-  | "verified"
-  | "deleting"
-  | "deleted"
-  | "mismatch"
-  | "failed"
-  | "cancelled";
+  | 'pending'
+  | 'scanning'
+  | 'verifying'
+  | 'verified'
+  | 'deleting'
+  | 'deleted'
+  | 'mismatch'
+  | 'failed'
+  | 'cancelled';
 
 // ── Scan response ──
 
@@ -43,7 +43,7 @@ export interface DeleteScanResponse {
 // ── SSE event types ──
 
 export interface DeleteProgressEvent {
-  type: "delete_progress";
+  type: 'delete_progress';
   job_id: string;
   status: string;
   total_files: number;
@@ -54,7 +54,7 @@ export interface DeleteProgressEvent {
 }
 
 export interface DeleteCompleteEvent {
-  type: "delete_complete";
+  type: 'delete_complete';
   job_id: string;
   status: string;
   total_files: number;

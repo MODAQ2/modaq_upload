@@ -1,10 +1,10 @@
-import { useEffect } from "react";
-import CacheSection from "../components/settings/CacheSection.tsx";
-import DangerZone from "../components/settings/DangerZone.tsx";
-import PerformanceSection from "../components/settings/PerformanceSection.tsx";
-import SettingsForm from "../components/settings/SettingsForm.tsx";
-import UpdateSection from "../components/settings/UpdateSection.tsx";
-import { useAppStore } from "../stores/appStore.ts";
+import { useEffect } from 'react';
+import CacheSection from '../components/settings/CacheSection.tsx';
+import DangerZone from '../components/settings/DangerZone.tsx';
+import PerformanceSection from '../components/settings/PerformanceSection.tsx';
+import SettingsForm from '../components/settings/SettingsForm.tsx';
+import UpdateSection from '../components/settings/UpdateSection.tsx';
+import { useAppStore } from '../stores/appStore.ts';
 
 export default function SettingsPage() {
   const { loadSettings, settingsLoading } = useAppStore();

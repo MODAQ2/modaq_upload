@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiGet } from "../../api/client.ts";
-import type { S3File, S3Folder, S3ListResponse } from "../../types/api.ts";
-import { CloudIcon } from "../../utils/icons.tsx";
-import Breadcrumb from "../common/Breadcrumb.tsx";
-import Spinner from "../common/Spinner.tsx";
-import FileList from "./FileList.tsx";
+import { useCallback, useEffect, useState } from 'react';
+import { apiGet } from '../../api/client.ts';
+import type { S3File, S3Folder, S3ListResponse } from '../../types/api.ts';
+import { CloudIcon } from '../../utils/icons.tsx';
+import Breadcrumb from '../common/Breadcrumb.tsx';
+import Spinner from '../common/Spinner.tsx';
+import FileList from './FileList.tsx';
 
 interface S3BrowserProps {
   bucketName: string;
@@ -12,7 +12,7 @@ interface S3BrowserProps {
 }
 
 export default function S3Browser({ bucketName, region }: S3BrowserProps) {
-  const [prefix, setPrefix] = useState("");
+  const [prefix, setPrefix] = useState('');
   const [folders, setFolders] = useState<S3Folder[]>([]);
   const [files, setFiles] = useState<S3File[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,14 +23,14 @@ export default function S3Browser({ bucketName, region }: S3BrowserProps) {
     const items = [
       {
         label: bucketName,
-        onClick: prefix ? () => setPrefix("") : undefined,
+        onClick: prefix ? () => setPrefix('') : undefined,
       },
     ];
 
     if (prefix) {
-      const parts = prefix.replace(/\/$/, "").split("/");
+      const parts = prefix.replace(/\/$/, '').split('/');
       for (let i = 0; i < parts.length; i++) {
-        const partPrefix = parts.slice(0, i + 1).join("/") + "/";
+        const partPrefix = `${parts.slice(0, i + 1).join('/')}/`;
         const isLast = i === parts.length - 1;
         items.push({
           label: parts[i],
@@ -46,17 +46,17 @@ export default function S3Browser({ bucketName, region }: S3BrowserProps) {
     setLoading(true);
     setError(null);
     try {
-      const params: Record<string, string> = { delimiter: "/" };
+      const params: Record<string, string> = { delimiter: '/' };
       if (currentPrefix) params.prefix = currentPrefix;
-      const data = await apiGet<S3ListResponse>("/api/files/list", params);
+      const data = await apiGet<S3ListResponse>('/api/files/list', params);
       if (!data.success) {
-        setError(data.error ?? "Failed to list objects");
+        setError(data.error ?? 'Failed to list objects');
         return;
       }
       setFolders(data.folders);
       setFiles(data.files);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch files");
+      setError(err instanceof Error ? err.message : 'Failed to fetch files');
     } finally {
       setLoading(false);
     }
@@ -94,6 +94,7 @@ export default function S3Browser({ bucketName, region }: S3BrowserProps) {
           <div className="text-center py-12">
             <p className="text-sm text-red-600 mb-3">{error}</p>
             <button
+              type="button"
               onClick={() => fetchObjects(prefix)}
               className="text-sm text-nlr-blue hover:underline"
             >

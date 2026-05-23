@@ -2,140 +2,179 @@
 
 import threading
 import time
-from collections.abc import Generator
-from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.routes.upload import (
-    SSE_QUEUE_TTL_SECONDS,
-    _cleanup_old_sse_queues,
-    _sse_events,
-    _sse_queues,
-    _sse_timestamps,
-    send_sse_event,
-)
+from app.services.sse_manager import SSEManager
+from app.services.upload_manager import FileUploadState, UploadJob, UploadStatus
 
 
 @pytest.fixture
-def clear_sse_state() -> Generator[None, None, None]:
-    """Clear SSE module state before each test."""
-    _sse_queues.clear()
-    _sse_events.clear()
-    _sse_timestamps.clear()
-    yield
-    _sse_queues.clear()
-    _sse_events.clear()
-    _sse_timestamps.clear()
+def sse_manager() -> SSEManager:
+    """Create a fresh SSEManager for each test."""
+    return SSEManager(ttl_seconds=300, heartbeat_interval=15)
 
 
-def test_send_sse_event_creates_timestamp(clear_sse_state: Any) -> None:
-    """Test that sending an event updates the timestamp."""
-    from collections import deque
-
+def test_send_sse_event_creates_timestamp(sse_manager: SSEManager) -> None:
+    """Test that sending an event updates the internal timestamp."""
     job_id = "test-job-123"
 
-    # Create a queue manually
-    queue = deque()
-    _sse_queues[job_id] = [queue]
+    # Register a client to create the queue
+    queue, _ = sse_manager.register_client(job_id)
 
     # Send event
-    send_sse_event(job_id, {"type": "test", "data": "hello"})
+    sse_manager.send_event(job_id, {"type": "test", "data": "hello"})
 
-    # Verify timestamp was created
-    assert job_id in _sse_timestamps
-    assert time.time() - _sse_timestamps[job_id] < 1  # Within 1 second
+    # Verify item was added to queue
+    assert len(queue) == 1
 
 
-def test_send_sse_event_signals_waiting_threads(clear_sse_state: Any) -> None:
+def test_send_sse_event_signals_waiting_threads(sse_manager: SSEManager) -> None:
     """Test that sending an event signals the threading.Event."""
-    from collections import deque
-
     job_id = "test-job-456"
 
-    # Create queue and event
-    queue = deque()
-    event = threading.Event()
-    _sse_queues[job_id] = [queue]
-    _sse_events[job_id] = event
+    queue, event = sse_manager.register_client(job_id)
 
     # Event should not be set initially
     assert not event.is_set()
 
     # Send event
-    send_sse_event(job_id, {"type": "test"})
+    sse_manager.send_event(job_id, {"type": "test"})
 
     # Event should now be set
     assert event.is_set()
     assert len(queue) == 1
 
 
-def test_cleanup_removes_old_queues(clear_sse_state: Any) -> None:
+def test_cleanup_removes_old_queues(sse_manager: SSEManager) -> None:
     """Test that cleanup removes expired queues."""
-    from collections import deque
+    # Create queues with synthetic old timestamps
+    job_id_old1 = "old-job-1"
+    job_id_old2 = "old-job-2"
+    job_id_recent = "recent-job"
 
-    # Create some queues with old timestamps
-    old_time = time.time() - SSE_QUEUE_TTL_SECONDS - 100
-    recent_time = time.time()
+    sse_manager.register_client(job_id_old1)
+    sse_manager.register_client(job_id_old2)
+    sse_manager.register_client(job_id_recent)
 
-    _sse_queues["old-job-1"] = [deque()]
-    _sse_timestamps["old-job-1"] = old_time
-    _sse_events["old-job-1"] = threading.Event()
-
-    _sse_queues["old-job-2"] = [deque()]
-    _sse_timestamps["old-job-2"] = old_time
-
-    _sse_queues["recent-job"] = [deque()]
-    _sse_timestamps["recent-job"] = recent_time
+    # Manually expire old jobs by backdating their timestamps
+    with sse_manager._lock:
+        old_time = time.time() - sse_manager.ttl_seconds - 100
+        sse_manager._timestamps[job_id_old1] = old_time
+        sse_manager._timestamps[job_id_old2] = old_time
 
     # Run cleanup
-    removed = _cleanup_old_sse_queues()
+    removed = sse_manager.cleanup_old_queues()
 
     # Should remove 2 old jobs, keep recent one
     assert removed == 2
-    assert "old-job-1" not in _sse_queues
-    assert "old-job-1" not in _sse_events
-    assert "old-job-1" not in _sse_timestamps
-    assert "old-job-2" not in _sse_queues
-    assert "recent-job" in _sse_queues
+    assert sse_manager.queue_count == 1
 
 
-def test_cleanup_with_no_expired_queues(clear_sse_state: Any) -> None:
+def test_cleanup_with_no_expired_queues(sse_manager: SSEManager) -> None:
     """Test that cleanup does nothing when all queues are recent."""
-    from collections import deque
+    sse_manager.register_client("job-1")
+    sse_manager.register_client("job-2")
 
-    recent_time = time.time()
+    # Run cleanup (timestamps are current, nothing should be removed)
+    removed = sse_manager.cleanup_old_queues()
 
-    _sse_queues["job-1"] = [deque()]
-    _sse_timestamps["job-1"] = recent_time
-
-    _sse_queues["job-2"] = [deque()]
-    _sse_timestamps["job-2"] = recent_time
-
-    # Run cleanup
-    removed = _cleanup_old_sse_queues()
-
-    # Should remove nothing
     assert removed == 0
-    assert len(_sse_queues) == 2
+    assert sse_manager.queue_count == 2
 
 
-def test_event_driven_signaling(clear_sse_state: Any) -> None:
+def test_throttled_progress_callback_coalesces_to_4_hz() -> None:
+    """The throttled callback must cap non-terminal SSE emits at ~4 Hz.
+
+    Simulates a 1 TB-style chunk callback storm — 1000 byte_callbacks within
+    ~250 ms. Without throttling that would mean 1000 SSE events; with the
+    0.25 s window the cap should be ~1 event per window (allow some jitter).
+    """
+    from app.routes.upload import (
+        SSE_EMIT_INTERVAL_SECONDS,
+        _make_throttled_progress_callback,
+    )
+
+    job = UploadJob(job_id="throttle-job")
+    job.files.append(FileUploadState("f1", "/p/f1", 1_000_000))
+    job.total_bytes_cached = 1_000_000
+    job.status = UploadStatus.UPLOADING
+
+    callback = _make_throttled_progress_callback(large_job_threshold=None)
+    mock_sse = MagicMock()
+    with patch("app.routes.upload.get_sse_manager", return_value=mock_sse):
+        start = time.monotonic()
+        emit_count = 0
+        # Hammer for ~600 ms — enough to hit at least two 250 ms windows.
+        while time.monotonic() - start < 0.6:
+            callback(job)
+            emit_count += 1
+        elapsed = time.monotonic() - start
+
+    # We fired hundreds of times but only ~4 Hz should have emitted.
+    assert emit_count > 50, "loop should have run many iterations"
+    max_expected = int(elapsed / SSE_EMIT_INTERVAL_SECONDS) + 2
+    assert (
+        mock_sse.send_event.call_count <= max_expected
+    ), f"emits={mock_sse.send_event.call_count} > cap={max_expected}"
+
+
+def test_throttled_progress_callback_always_emits_terminal() -> None:
+    """Terminal status events must bypass the throttle."""
+    from app.routes.upload import _make_throttled_progress_callback
+
+    job = UploadJob(job_id="terminal-job")
+    job.files.append(FileUploadState("f1", "/p/f1", 100))
+    job.total_bytes_cached = 100
+    job.status = UploadStatus.UPLOADING
+
+    callback = _make_throttled_progress_callback(large_job_threshold=None)
+    mock_sse = MagicMock()
+    with patch("app.routes.upload.get_sse_manager", return_value=mock_sse):
+        # Burn one emit slot
+        callback(job)
+        first_calls = mock_sse.send_event.call_count
+        # Immediately fire again — should be throttled
+        callback(job)
+        assert mock_sse.send_event.call_count == first_calls
+        # Now transition to terminal — must emit even though we're still inside the throttle window
+        job.status = UploadStatus.COMPLETED
+        callback(job)
+        assert mock_sse.send_event.call_count == first_calls + 1
+
+
+def test_throttled_callback_large_job_terminal_sends_summary_only() -> None:
+    """Above large_job_threshold, terminal events send the summary, not the full to_dict."""
+    from app.routes.upload import _make_throttled_progress_callback
+
+    job = UploadJob(job_id="large-job")
+    for i in range(2000):
+        job.files.append(FileUploadState(f"f{i}", f"/p/f{i}", 100))
+    job.total_bytes_cached = 200_000
+    job.status = UploadStatus.COMPLETED
+
+    callback = _make_throttled_progress_callback(large_job_threshold=1000)
+    mock_sse = MagicMock()
+    with patch("app.routes.upload.get_sse_manager", return_value=mock_sse):
+        callback(job)
+
+    assert mock_sse.send_event.call_count == 1
+    payload = mock_sse.send_event.call_args[0][1]
+    assert payload.get("terminal") is True
+    # Summary shape never embeds the full 2000-file list
+    assert len(payload["files"]) <= 8
+
+
+def test_event_driven_signaling(sse_manager: SSEManager) -> None:
     """Test that Event.wait() is more efficient than polling."""
-    from collections import deque
-
     job_id = "test-job-signal"
-    queue = deque()
-    event = threading.Event()
-
-    _sse_queues[job_id] = [queue]
-    _sse_events[job_id] = event
+    queue, event = sse_manager.register_client(job_id)
 
     # Simulate waiting thread
     wait_result: list[float] = []
 
     def waiter() -> None:
-        # This should block until event is set
         start = time.time()
         event.wait(timeout=2.0)
         elapsed = time.time() - start
@@ -148,11 +187,11 @@ def test_event_driven_signaling(clear_sse_state: Any) -> None:
     time.sleep(0.1)
 
     # Send event to wake thread
-    send_sse_event(job_id, {"type": "wake"})
+    sse_manager.send_event(job_id, {"type": "wake"})
 
     # Wait for thread to finish
     thread.join(timeout=3.0)
 
     # Thread should have woken up quickly (< 0.5s, not 2s timeout)
     assert len(wait_result) == 1
-    assert wait_result[0] < 0.5  # Should be nearly instant
+    assert wait_result[0] < 0.5

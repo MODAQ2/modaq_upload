@@ -5,10 +5,10 @@
  * store's snapshot reference changes (rAF-batched).
  */
 
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore } from 'react';
 
-import { fileStore } from "../stores/fileStore.ts";
-import type { UnifiedFileRow } from "../types/upload.ts";
+import { fileStore } from '../stores/fileStore.ts';
+import type { UnifiedFileRow } from '../types/upload.ts';
 
 export function useFileStore(): {
   files: UnifiedFileRow[];

@@ -1,34 +1,37 @@
 /**
  * Upload page — the 4-step upload workflow with a unified file table.
  *
- * Step 1: FolderBrowser — select a folder of MCAP files
+ * Step 1: FolderBrowser — select a folder of Data Files
  * Steps 2-4: Unified table that persists across Review, Upload, and Summary,
  *   with phase-aware header, toolbar, and footer.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import Spinner from "../components/common/Spinner.tsx";
-import ActiveFilesList from "../components/upload/ActiveFilesList.tsx";
-import BatchProgress from "../components/upload/BatchProgress.tsx";
-import CancelConfirmModal from "../components/upload/CancelConfirmModal.tsx";
-import ConfirmModal from "../components/upload/ConfirmModal.tsx";
-import FolderBrowser from "../components/upload/FolderBrowser.tsx";
-import type { FolderExclusions } from "../components/upload/FolderBrowser.tsx";
-import ReviewToolbar, { StatusFilterBar } from "../components/upload/ReviewToolbar.tsx";
-import ScanProgressModal from "../components/upload/ScanProgressModal.tsx";
-import Stepper from "../components/upload/Stepper.tsx";
-import UnifiedFileTable from "../components/upload/UnifiedFileTable.tsx";
-import UploadFooter from "../components/upload/UploadFooter.tsx";
-import UploadHeader from "../components/upload/UploadHeader.tsx";
-import { useFileStore } from "../hooks/useFileStore.ts";
-import { useFolderScan } from "../hooks/useFolderScan.ts";
-import { useUploadJob } from "../hooks/useUploadJob.ts";
-import { useAppStore } from "../stores/appStore.ts";
-import { useUploadStore, type UploadStep } from "../stores/uploadStore.ts";
-import type { FileUploadState, ScannedFileInfo } from "../types/api.ts";
-import type { StatusFilter, UploadPhase } from "../types/upload.ts";
-import { downloadUploadCsv } from "../utils/csv.ts";
+import Spinner from '../components/common/Spinner.tsx';
+import ActiveFilesList from '../components/upload/ActiveFilesList.tsx';
+import BatchProgress from '../components/upload/BatchProgress.tsx';
+import CancelConfirmModal from '../components/upload/CancelConfirmModal.tsx';
+import ConfirmModal from '../components/upload/ConfirmModal.tsx';
+import type { FolderExclusions } from '../components/upload/FolderBrowser.tsx';
+import FolderBrowser from '../components/upload/FolderBrowser.tsx';
+import LargeFolderSuggestionModal, {
+  LARGE_FOLDER_THRESHOLD,
+} from '../components/upload/LargeFolderSuggestionModal.tsx';
+import ReviewToolbar, { StatusFilterBar } from '../components/upload/ReviewToolbar.tsx';
+import ScanProgressModal from '../components/upload/ScanProgressModal.tsx';
+import Stepper from '../components/upload/Stepper.tsx';
+import UnifiedFileTable from '../components/upload/UnifiedFileTable.tsx';
+import UploadFooter from '../components/upload/UploadFooter.tsx';
+import UploadHeader from '../components/upload/UploadHeader.tsx';
+import { useFileStore } from '../hooks/useFileStore.ts';
+import { useFolderScan } from '../hooks/useFolderScan.ts';
+import { useUploadJob } from '../hooks/useUploadJob.ts';
+import { useAppStore } from '../stores/appStore.ts';
+import { type UploadStep, useUploadStore } from '../stores/uploadStore.ts';
+import type { FileUploadState, ScannedFileInfo } from '../types/api.ts';
+import type { StatusFilter, UploadPhase } from '../types/upload.ts';
+import { downloadUploadCsv } from '../utils/csv.ts';
 
 export default function UploadPage() {
   const {
@@ -45,43 +48,45 @@ export default function UploadPage() {
 
   const defaultUploadFolder = useAppStore((s) => s.settings?.default_upload_folder);
 
-  const {
-    startScan,
-    cancelScan,
-    isScanning,
-    scanComplete,
-    folders,
-    foldersTotal,
-    totals,
-  } = useFolderScan();
+  const { startScan, cancelScan, isScanning, scanComplete, folders, foldersTotal, totals } =
+    useFolderScan();
 
   // Unified file store
   const { files, store } = useFileStore();
 
   // SSE callback: map each file event to the FileStore
-  const handleFileUpdate = useCallback((file: FileUploadState) => {
-    const statusMap: Record<string, "in_progress" | "completed" | "skipped" | "failed" | "queued"> = {
-      analyzing: "in_progress",
-      uploading: "in_progress",
-      completed: "completed",
-      skipped: "skipped",
-      failed: "failed",
-      cancelled: "failed",
-    };
-    store.updateFile(file.local_path, {
-      status: statusMap[file.status] ?? "queued",
-      progressPercent: file.progress_percent,
-      s3Path: file.s3_path || undefined,
-      error: file.error_message || undefined,
-      duration: file.upload_duration_seconds,
-      speed: file.upload_speed_mbps,
-    });
-  }, [store]);
+  const handleFileUpdate = useCallback(
+    (file: FileUploadState) => {
+      const statusMap: Record<
+        string,
+        'in_progress' | 'completed' | 'skipped' | 'failed' | 'queued'
+      > = {
+        analyzing: 'in_progress',
+        uploading: 'in_progress',
+        completed: 'completed',
+        skipped: 'skipped',
+        failed: 'failed',
+        cancelled: 'failed',
+      };
+      store.updateFile(file.local_path, {
+        status: statusMap[file.status] ?? 'queued',
+        progressPercent: file.progress_percent,
+        s3Path: file.s3_path || undefined,
+        error: file.error_message || undefined,
+        duration: file.upload_duration_seconds,
+        speed: file.upload_speed_mbps,
+      });
+    },
+    [store],
+  );
 
   // SSE callback: merge full completion data into the FileStore
-  const handleCompletion = useCallback((completionFiles: FileUploadState[]) => {
-    store.mergeCompletion(completionFiles);
-  }, [store]);
+  const handleCompletion = useCallback(
+    (completionFiles: FileUploadState[]) => {
+      store.mergeCompletion(completionFiles);
+    },
+    [store],
+  );
 
   const uploadJob = useUploadJob({
     onFileUpdate: handleFileUpdate,
@@ -93,6 +98,7 @@ export default function UploadPage() {
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [pendingSelectedPaths, setPendingSelectedPaths] = useState<string[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [showLargeFolderModal, setShowLargeFolderModal] = useState(false);
 
   // Delay scan modal by 500 ms — fast/cached scans complete before the timer
   // fires, so the modal never flashes for them.
@@ -107,7 +113,7 @@ export default function UploadPage() {
   }, [isScanning]);
 
   // Derive phase from step
-  const phase: UploadPhase = step <= 2 ? "review" : step === 3 ? "uploading" : "summary";
+  const phase: UploadPhase = step <= 2 ? 'review' : step === 3 ? 'uploading' : 'summary';
 
   // ── Freeze/unfreeze sort on phase transitions ──
 
@@ -148,9 +154,13 @@ export default function UploadPage() {
         }
       }
       setSelectedPaths(newSelected);
+      // Show large-folder suggestion if total exceeds threshold
+      if (totals.totalFiles >= LARGE_FOLDER_THRESHOLD) {
+        setShowLargeFolderModal(true);
+      }
       setStep(2);
     }
-  }, [step, scanComplete, folders, store, setSelectedPaths, setStep]);
+  }, [step, scanComplete, folders, store, setStep, totals.totalFiles]);
 
   /** Step 2: User clicks "Start Upload" — show confirmation modal. */
   const handleStartUploadClick = useCallback(() => {
@@ -167,8 +177,8 @@ export default function UploadPage() {
       // Mark selected files as queued, remove unselected
       store.markSelectedAsPending(new Set(pendingSelectedPaths));
       // Reset filter for upload phase
-      store.setFilter("all");
-      store.setSearch("");
+      store.setFilter('all');
+      store.setSearch('');
 
       setStep(3);
       await uploadJob.startUpload(pendingSelectedPaths, skipDuplicates);
@@ -243,8 +253,14 @@ export default function UploadPage() {
 
   // `files` is listed as a dep to re-derive when the store snapshot changes
   // (store itself is a stable singleton).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // `files` is a reactive snapshot from useSyncExternalStore — including it as a
+  // dep ensures this recomputes whenever the store is mutated (scan populate,
+  // SSE updates, etc.).  Without it, `store` never changes reference (singleton)
+  // so the memo would always return the empty array from mount time.
+  /* eslint-disable react-hooks/exhaustive-deps -- `files` is an intentional reactive trigger for the mutable store singleton */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `files` is an intentional reactive trigger — store is a stable singleton but files snapshot drives recompute
   const allFiles = useMemo(() => Array.from(store.getAllRows().values()), [store, files]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const toggleAllFiltered = useCallback(() => {
     const filteredPaths = files.map((f) => f.path);
@@ -271,10 +287,13 @@ export default function UploadPage() {
     setSelectedPaths(new Set());
   }, []);
 
-  const selectFirstN = useCallback((n: number) => {
-    const paths = files.slice(0, n).map((f) => f.path);
-    setSelectedPaths(new Set(paths));
-  }, [files]);
+  const selectFirstN = useCallback(
+    (n: number) => {
+      const paths = files.slice(0, n).map((f) => f.path);
+      setSelectedPaths(new Set(paths));
+    },
+    [files],
+  );
 
   // ── Header checkbox state ──
 
@@ -309,14 +328,17 @@ export default function UploadPage() {
 
   // ── Filter click handler (from clickable status counters) ──
 
-  const handleFilterClick = useCallback((filter: StatusFilter) => {
-    store.setFilter(filter);
-  }, [store]);
+  const handleFilterClick = useCallback(
+    (filter: StatusFilter) => {
+      store.setFilter(filter);
+    },
+    [store],
+  );
 
   // ── CSV download ──
 
   const handleDownloadCsv = useCallback(() => {
-    const jobId = completedJob?.job_id ?? "unknown";
+    const jobId = completedJob?.job_id ?? 'unknown';
     downloadUploadCsv(Array.from(store.getAllRows().values()), jobId);
   }, [completedJob, store]);
 
@@ -341,9 +363,8 @@ export default function UploadPage() {
       }
     }
     return { toUpload, uploadSize, alreadyOnS3, totalInFolder: allFiles.length };
-  // `files` dep ensures we recompute when the store snapshot changes
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allFiles, selectedPaths, files]);
+    // `files` dep ensures we recompute when the store snapshot changes
+  }, [allFiles, selectedPaths]);
 
   // ── Render ──
 
@@ -383,7 +404,7 @@ export default function UploadPage() {
           />
 
           {/* Phase-aware toolbar */}
-          {phase === "review" ? (
+          {phase === 'review' ? (
             <ReviewToolbar
               statusFilter={store.getFilter()}
               onStatusFilterChange={(f) => store.setFilter(f)}
@@ -392,7 +413,7 @@ export default function UploadPage() {
               selectedCount={selectedPaths.size}
               totalCount={store.getSize()}
               filteredCount={files.length}
-              showFilteredCount={store.getFilter() !== "all" || store.getSearch() !== ""}
+              showFilteredCount={store.getFilter() !== 'all' || store.getSearch() !== ''}
               onSelectAll={selectAll}
               onSelectNewOnly={selectNewOnly}
               onToggleAllFiltered={toggleAllFiltered}
@@ -412,7 +433,7 @@ export default function UploadPage() {
           )}
 
           {/* Top action buttons (review phase only) */}
-          {phase === "review" && (
+          {phase === 'review' && (
             <UploadFooter
               phase="review"
               onBack={handleBack}
@@ -422,7 +443,7 @@ export default function UploadPage() {
           )}
 
           {/* Batch processing UI for upload phase with large jobs */}
-          {phase === "uploading" && isBatchProcessing ? (
+          {phase === 'uploading' && isBatchProcessing ? (
             <>
               <BatchProgress
                 batchState={batchState}
@@ -509,6 +530,13 @@ export default function UploadPage() {
         totalSize={totals.totalSize}
         folderPath={folderPath}
         onCancel={handleCancelScan}
+      />
+
+      {/* Large folder suggestion modal — shown when scan finds 500+ files */}
+      <LargeFolderSuggestionModal
+        isOpen={showLargeFolderModal}
+        fileCount={totals.totalFiles}
+        onContinueAnyway={() => setShowLargeFolderModal(false)}
       />
     </div>
   );

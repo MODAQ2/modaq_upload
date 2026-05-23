@@ -3,7 +3,7 @@
  * Returns "--" for null/invalid values.
  */
 export function formatEta(seconds: number | null | undefined): string {
-  if (seconds == null || seconds <= 0) return "--";
+  if (seconds == null || seconds <= 0) return '--';
   if (seconds < 60) return `${Math.round(seconds)}s`;
   if (seconds < 3600) {
     const m = Math.floor(seconds / 60);
@@ -20,7 +20,7 @@ export function formatEta(seconds: number | null | undefined): string {
  * Includes millisecond precision for durations less than 1 second.
  */
 export function formatDuration(seconds: number | null): string {
-  if (seconds == null || seconds <= 0) return "--";
+  if (seconds == null || seconds <= 0) return '--';
   if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
   const m = Math.floor(seconds / 60);

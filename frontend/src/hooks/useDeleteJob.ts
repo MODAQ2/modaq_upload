@@ -5,16 +5,12 @@
  * then listens on SSE for per-file progress updates.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from 'react';
 
-import { apiPost } from "../api/client.ts";
-import { useDeleteStore } from "../stores/deleteStore.ts";
-import type {
-  DeleteCompleteEvent,
-  DeleteJobResult,
-  DeleteProgressEvent,
-} from "../types/delete.ts";
-import { useSSE } from "./useSSE.ts";
+import { apiPost } from '../api/client.ts';
+import { useDeleteStore } from '../stores/deleteStore.ts';
+import type { DeleteCompleteEvent, DeleteJobResult, DeleteProgressEvent } from '../types/delete.ts';
+import { useJobProgress } from './useJobProgress.ts';
 
 interface StatusCounts {
   deleted: number;
@@ -40,14 +36,14 @@ interface UseDeleteJobResult {
 function isProgressEvent(
   data: Record<string, unknown>,
 ): data is DeleteProgressEvent & Record<string, unknown> {
-  return data.type === "delete_progress";
+  return data.type === 'delete_progress';
 }
 
 /** Type guard: is this a completion event? */
 function isCompleteEvent(
   data: Record<string, unknown>,
 ): data is DeleteCompleteEvent & Record<string, unknown> {
-  return data.type === "delete_complete";
+  return data.type === 'delete_complete';
 }
 
 function extractCounts(counts: Record<string, number>): StatusCounts {
@@ -72,8 +68,7 @@ export function useDeleteJob(): UseDeleteJobResult {
     verifying: 0,
   });
   const [totalDeletedSize, setTotalDeletedSize] = useState(0);
-  const [jobStatus, setJobStatus] = useState("pending");
-  const [isCancelling, setIsCancelling] = useState(false);
+  const [jobStatus, setJobStatus] = useState('pending');
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   const { deleteJobId, setCompletedJob, setIsDeleting } = useDeleteStore();
@@ -81,7 +76,7 @@ export function useDeleteJob(): UseDeleteJobResult {
   const handleMessage = useCallback(
     (raw: unknown) => {
       const data = raw as Record<string, unknown>;
-      if (!data || typeof data !== "object") return;
+      if (!data || typeof data !== 'object') return;
 
       if (isProgressEvent(data)) {
         const p = data as DeleteProgressEvent;
@@ -101,7 +96,6 @@ export function useDeleteJob(): UseDeleteJobResult {
         setTotalDeletedSize(c.total_deleted_size);
         setJobStatus(c.status);
         setIsRunning(false);
-        setIsCancelling(false);
         setIsDeleting(false);
         setActiveJobId(null);
         setCompletedJob(c as unknown as DeleteJobResult);
@@ -112,23 +106,23 @@ export function useDeleteJob(): UseDeleteJobResult {
   );
 
   const sseUrl = useMemo(
-    () =>
-      activeJobId && isRunning
-        ? `/api/delete/progress/${activeJobId}`
-        : null,
+    () => (activeJobId && isRunning ? `/api/delete/progress/${activeJobId}` : null),
     [activeJobId, isRunning],
   );
 
-  useSSE({
-    url: sseUrl,
+  const cancelUrl = useMemo(
+    () => (deleteJobId ? `/api/delete/cancel/${deleteJobId}` : null),
+    [deleteJobId],
+  );
+
+  const { isCancelling, cancel } = useJobProgress({
+    sseUrl,
+    cancelUrl,
     onMessage: handleMessage,
-    onError: () => {
-      if (isRunning) {
-        setIsRunning(false);
-        setIsCancelling(false);
-        setIsDeleting(false);
-        setActiveJobId(null);
-      }
+    onForceClose: () => {
+      setIsRunning(false);
+      setIsDeleting(false);
+      setActiveJobId(null);
     },
   });
 
@@ -144,8 +138,7 @@ export function useDeleteJob(): UseDeleteJobResult {
       verifying: 0,
     });
     setTotalDeletedSize(0);
-    setJobStatus("verifying");
-    setIsCancelling(false);
+    setJobStatus('verifying');
     setIsRunning(true);
     setIsDeleting(true);
 
@@ -158,25 +151,9 @@ export function useDeleteJob(): UseDeleteJobResult {
     }
   }, [deleteJobId, setIsDeleting]);
 
-  /** Cancel the delete job. SSE terminal event handles cleanup. */
-  const cancelDelete = useCallback(async () => {
-    const jobId = useDeleteStore.getState().deleteJobId;
-    if (!jobId) return;
-    setIsCancelling(true);
-    try {
-      await apiPost(`/api/delete/cancel/${jobId}`);
-    } catch {
-      // If cancel request fails, force-close
-      setIsRunning(false);
-      setIsCancelling(false);
-      setIsDeleting(false);
-      setActiveJobId(null);
-    }
-  }, [setIsDeleting]);
-
   return {
     startDelete,
-    cancelDelete,
+    cancelDelete: cancel,
     filesProcessed,
     totalFiles,
     statusCounts,
