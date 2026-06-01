@@ -45,12 +45,23 @@ def app() -> Generator[Flask, None, None]:
     # Create the app (settings will be loaded from default)
     _ = SETTINGS_FILE  # Reference to avoid unused import warning
 
+    # Redirect logs to a temp dir so the automatic request/error logging hooks
+    # don't write into the repo's real logs/ directory during tests.
+    from app.config import get_settings
+
+    settings = get_settings()
+    log_temp_dir = tempfile.mkdtemp()
+    original_log_dir = settings._settings.get("log_directory")
+    settings._settings["log_directory"] = log_temp_dir
+
     app = create_app()
     app.config["TESTING"] = True
 
     yield app
 
     # Cleanup
+    if original_log_dir is not None:
+        settings._settings["log_directory"] = original_log_dir
     os.unlink(temp_settings)
     if dist_created:
         os.unlink(index_path)
