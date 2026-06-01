@@ -44,6 +44,25 @@ class SyncJob:
     created_at: float = field(default_factory=time.time)
 
 
+def _resolve_folder_path(folder: Path) -> Path:
+    """Resolve a folder to an absolute, symlink-followed real path.
+
+    A relative path is anchored to the configured ``default_upload_folder`` (the user's
+    data root), never the process cwd — the launcher runs us with cwd=PROJECT_DIR, so
+    resolving against it would point at the project, not the drive. The base is forced
+    absolute (falling back to home) so the result is always absolute. ``resolve()`` also
+    follows the symlinks that external and mounted drives are reached through, so
+    ``aws s3 sync`` targets the real mount.
+    """
+    folder = folder.expanduser()
+    if not folder.is_absolute():
+        base = Path(get_settings().default_upload_folder).expanduser()
+        if not base.is_absolute():
+            base = Path.home()
+        folder = base / folder
+    return folder.resolve()
+
+
 def _register(job: SyncJob) -> None:
     with _jobs_lock:
         _jobs[job.job_id] = job
@@ -316,13 +335,18 @@ def start_sync() -> tuple[Response, int]:
         return jsonify({"error": "JSON body required"}), 400
 
     data: dict[str, Any] = request.get_json() or {}
-    folder_path: str = data.get("folder_path", "").strip()
+    folder_path_raw: str = data.get("folder_path", "").strip()
     s3_prefix: str = data.get("s3_prefix", "").strip()
 
-    if not folder_path:
+    if not folder_path_raw:
         return jsonify({"error": "folder_path is required"}), 400
-    if not os.path.isdir(folder_path):
-        return jsonify({"error": f"folder_path does not exist: {folder_path}"}), 400
+    folder = _resolve_folder_path(Path(folder_path_raw))
+    if not folder.is_dir():
+        return jsonify({"error": f"folder_path does not exist: {folder}"}), 400
+
+    # str at the serialization boundary: the subprocess command, the SyncJob record,
+    # and the JSON logs all store the path as text.
+    folder_path = str(folder)
     if not s3_prefix:
         return jsonify({"error": "s3_prefix is required"}), 400
 
