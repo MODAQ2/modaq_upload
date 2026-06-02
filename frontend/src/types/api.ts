@@ -379,6 +379,8 @@ export interface S3StatsResponse {
   prefix: string;
   folder_count: number;
   file_count: number;
+  /** True when file_count hit the server's cap and the real total is higher. */
+  capped?: boolean;
   error?: string;
 }
 

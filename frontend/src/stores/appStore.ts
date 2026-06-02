@@ -15,6 +15,41 @@ export interface Notification {
   message: string;
 }
 
+// How long an automatic update check stays fresh before we re-run `git fetch`.
+const AUTO_UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const AUTO_UPDATE_CHECK_KEY = 'modaq.autoUpdateCheck';
+
+interface CachedAutoCheck {
+  ts: number;
+  result: UpdateCheckResult;
+  branchInfo: BranchListResult | null;
+}
+
+/** Return a still-fresh cached update check, or null to trigger a new fetch. */
+function readCachedAutoCheck(): CachedAutoCheck | null {
+  try {
+    const raw = localStorage.getItem(AUTO_UPDATE_CHECK_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as CachedAutoCheck;
+    if (Date.now() - cached.ts > AUTO_UPDATE_CHECK_TTL_MS) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedAutoCheck(
+  result: UpdateCheckResult,
+  branchInfo: BranchListResult | null,
+): void {
+  try {
+    const payload: CachedAutoCheck = { ts: Date.now(), result, branchInfo };
+    localStorage.setItem(AUTO_UPDATE_CHECK_KEY, JSON.stringify(payload));
+  } catch {
+    // Storage unavailable (private mode / quota) — skip caching, no harm.
+  }
+}
+
 interface AppState {
   // Settings
   settings: AppSettings | null;
@@ -94,12 +129,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   runAutoCheck: async () => {
     if (get().autoCheckDone) return;
     set({ autoCheckDone: true });
+
+    // The update check runs `git fetch` server-side (seconds) and is purely
+    // informational, so don't run it on every page load. Cache the result in
+    // localStorage and only re-check once per AUTO_UPDATE_CHECK_TTL_MS. This
+    // keeps it off the hot path of data pages like /files (which just needs to
+    // list S3 objects).
+    const cached = readCachedAutoCheck();
+    if (cached) {
+      set({ autoCheckResult: cached.result, branchInfo: cached.branchInfo });
+      return;
+    }
+
     try {
       const [checkResult, branchInfo] = await Promise.all([
         apiGet<UpdateCheckResult>('/api/settings/check-updates'),
         apiGet<BranchListResult>('/api/settings/branches'),
       ]);
       set({ autoCheckResult: checkResult, branchInfo });
+      writeCachedAutoCheck(checkResult, branchInfo);
       // Only pop the modal automatically when an update is actually available
       if (checkResult.updates_available) {
         set({ showUpdateModal: true });

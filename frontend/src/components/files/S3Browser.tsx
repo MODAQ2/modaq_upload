@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet } from '../../api/client.ts';
 import type { S3File, S3Folder, S3ListResponse, S3StatsResponse } from '../../types/api.ts';
+import { reportClientEvent } from '../../utils/errorReporter.ts';
 import { CloudIcon } from '../../utils/icons.tsx';
 import Breadcrumb from '../common/Breadcrumb.tsx';
 import FileList from './FileList.tsx';
@@ -19,7 +20,9 @@ export default function S3Browser({ bucketName, region }: S3BrowserProps) {
   const [nextToken, setNextToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<S3StatsResponse | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
+  // Aborts the in-flight stats request when we navigate away before it returns,
+  // so stale counts can't land late and overwrite the current folder's note.
+  const statsAbortRef = useRef<AbortController | null>(null);
 
   // Build breadcrumb items from the current prefix
   const breadcrumbItems = (() => {
@@ -48,10 +51,29 @@ export default function S3Browser({ bucketName, region }: S3BrowserProps) {
   const fetchObjects = useCallback(async (currentPrefix: string) => {
     setLoading(true);
     setError(null);
+    // Clear the previous folder's rows immediately. Otherwise the parent's
+    // contents linger under the new breadcrumb until this fetch returns, which
+    // reads as a stale/"stuck" list showing the wrong folder.
+    setFolders([]);
+    setFiles([]);
+    setNextToken(null);
+    const startedAt = performance.now();
     try {
       const params: Record<string, string> = { delimiter: '/' };
       if (currentPrefix) params.prefix = currentPrefix;
       const data = await apiGet<S3ListResponse>('/api/files/list', params);
+      // Browser-perceived round-trip (network + server). Compare against the
+      // backend's own duration_ms log to separate S3/network time from handling.
+      const durationMs = Math.round(performance.now() - startedAt);
+      reportClientEvent('s3_list_timing', `files/list ${durationMs}ms`, {
+        endpoint: '/api/files/list',
+        prefix: currentPrefix || '(root)',
+        duration_ms: durationMs,
+        ok: data.success,
+        folder_count: data.folders?.length ?? 0,
+        file_count: data.files?.length ?? 0,
+        has_more: data.next_token != null,
+      });
       if (!data.success) {
         setError(data.error ?? 'Failed to list objects');
         return;
@@ -97,21 +119,49 @@ export default function S3Browser({ bucketName, region }: S3BrowserProps) {
   // Accurate counts for the current level. Fetched separately because the file
   // list is paginated (one page at a time), so its loaded length isn't the total.
   const fetchStats = useCallback(async (currentPrefix: string) => {
-    setStatsLoading(true);
+    // Cancel any stats request still running for a previously-viewed folder.
+    statsAbortRef.current?.abort();
+    const controller = new AbortController();
+    statsAbortRef.current = controller;
+
     setStats(null);
+    const startedAt = performance.now();
     try {
       const params: Record<string, string> = { delimiter: '/' };
       if (currentPrefix) params.prefix = currentPrefix;
-      const data = await apiGet<S3StatsResponse>('/api/files/stats', params);
+      const data = await apiGet<S3StatsResponse>('/api/files/stats', params, controller.signal);
+      const durationMs = Math.round(performance.now() - startedAt);
+      reportClientEvent('s3_stats_timing', `files/stats ${durationMs}ms`, {
+        endpoint: '/api/files/stats',
+        prefix: currentPrefix || '(root)',
+        duration_ms: durationMs,
+        ok: data.success,
+        folder_count: data.folder_count,
+        file_count: data.file_count,
+        capped: data.capped ?? false,
+      });
       const valid =
         data.success &&
         typeof data.folder_count === 'number' &&
         typeof data.file_count === 'number';
       setStats(valid ? data : null);
     } catch {
-      setStats(null); // Counts are non-critical; don't surface as an error.
-    } finally {
-      setStatsLoading(false);
+      // Aborted (navigated away) or failed — counts are non-critical, so don't
+      // surface an error. An abort leaves the newer request to set the state.
+      const durationMs = Math.round(performance.now() - startedAt);
+      reportClientEvent(
+        's3_stats_timing',
+        controller.signal.aborted
+          ? `files/stats aborted after ${durationMs}ms`
+          : `files/stats failed after ${durationMs}ms`,
+        {
+          endpoint: '/api/files/stats',
+          prefix: currentPrefix || '(root)',
+          duration_ms: durationMs,
+          aborted: controller.signal.aborted,
+        },
+      );
+      if (!controller.signal.aborted) setStats(null);
     }
   }, []);
 
@@ -124,10 +174,18 @@ export default function S3Browser({ bucketName, region }: S3BrowserProps) {
     setPrefix(newPrefix);
   }, []);
 
-  // A plain-language note summarizing the current folder's contents.
+  // A plain-language note summarizing the current folder's contents. It appears
+  // quietly once counting finishes; while counting we render nothing rather than
+  // a "Counting items…" placeholder, so the note never looks like it's holding
+  // up the file list (which loads independently and is what actually matters).
   const statsNote = (() => {
-    if (statsLoading) return 'Counting items…';
     if (!stats) return null;
+    // Capped: counting stopped early, so both counts are lower bounds — report a
+    // single "over N items" rather than implying an exact per-type breakdown.
+    if (stats.capped) {
+      const total = stats.folder_count + stats.file_count;
+      return `Large folder — over ${total.toLocaleString()} items.`;
+    }
     const plural = (n: number, word: string) =>
       `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
     const folders = plural(stats.folder_count, 'subfolder');
