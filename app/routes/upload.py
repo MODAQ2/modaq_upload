@@ -79,10 +79,7 @@ def _make_throttled_progress_callback(
             # Large jobs read per-file results from /api/upload/results (SQLite-backed)
             # rather than receiving a 10k-row payload here. Small jobs keep the
             # legacy behavior — frontend merges the full file array directly.
-            if (
-                large_job_threshold is not None
-                and len(job.files) >= large_job_threshold
-            ):
+            if large_job_threshold is not None and len(job.files) >= large_job_threshold:
                 payload = job.to_progress_dict()
                 payload["terminal"] = True
                 sse.send_event(job.job_id, payload)
@@ -96,9 +93,7 @@ def _make_throttled_progress_callback(
 
 def _large_job_threshold() -> int:
     """Read the live setting for the large-job cutoff."""
-    return int(
-        get_settings().batch_processing.get("large_job_threshold", 1000)
-    )
+    return int(get_settings().batch_processing.get("large_job_threshold", 1000))
 
 
 @upload_bp.route("/analyze", methods=["POST"])
