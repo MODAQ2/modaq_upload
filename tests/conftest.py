@@ -12,23 +12,36 @@ from flask import Flask
 from flask.testing import FlaskClient
 
 from app import create_app
-from app.config import SETTINGS_FILE
+
+
+@pytest.fixture(autouse=True)
+def _reset_s3_client_cache() -> Generator[None, None, None]:
+    """Clear the cached S3 client around every test.
+
+    The cache persists module-level, so without this a client built under one
+    test's ``mock_aws`` context (or with one profile) would leak into the next.
+    """
+    from app.services import s3_service
+
+    s3_service.reset_s3_client_cache()
+    yield
+    s3_service.reset_s3_client_cache()
 
 
 @pytest.fixture
 def app() -> Generator[Flask, None, None]:
     """Create application for testing."""
-    # Use a temporary settings file
+    import app.config as config
+
+    # Isolate settings: copy the committed settings.test.json template to a
+    # throwaway file, point SETTINGS_FILE at the copy, and reset the singleton so
+    # the app reads/writes there. Without this, tests that save settings (e.g.
+    # PUT /api/settings) would clobber the real, gitignored settings.json. We copy
+    # rather than use the template directly so saves never mutate the template.
+    test_template = config.BASE_DIR / "settings.test.json"
+    settings_seed = json.loads(test_template.read_text(encoding="utf-8"))
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump(
-            {
-                "aws_profile": "default",
-                "aws_region": "us-west-2",
-                "s3_bucket": "test-bucket",
-                "default_upload_folder": "",
-            },
-            f,
-        )
+        json.dump(settings_seed, f)
         temp_settings = f.name
 
     # Ensure frontend/dist/index.html exists so SPA routes can serve it
@@ -42,8 +55,10 @@ def app() -> Generator[Flask, None, None]:
         with open(index_path, "w") as f:
             f.write('<!doctype html><html><body><div id="root"></div></body></html>')
 
-    # Create the app (settings will be loaded from default)
-    _ = SETTINGS_FILE  # Reference to avoid unused import warning
+    original_settings_file = config.SETTINGS_FILE
+    original_instance = config.Settings._instance
+    config.SETTINGS_FILE = Path(temp_settings)
+    config.Settings._instance = None  # force a reload from the temp settings file
 
     # Redirect logs to a temp dir so the automatic request/error logging hooks
     # don't write into the repo's real logs/ directory during tests.
@@ -51,7 +66,6 @@ def app() -> Generator[Flask, None, None]:
 
     settings = get_settings()
     log_temp_dir = tempfile.mkdtemp()
-    original_log_dir = settings._settings.get("log_directory")
     settings._settings["log_directory"] = log_temp_dir
 
     app = create_app()
@@ -59,9 +73,9 @@ def app() -> Generator[Flask, None, None]:
 
     yield app
 
-    # Cleanup
-    if original_log_dir is not None:
-        settings._settings["log_directory"] = original_log_dir
+    # Cleanup: restore the real settings file path and singleton.
+    config.SETTINGS_FILE = original_settings_file
+    config.Settings._instance = original_instance
     os.unlink(temp_settings)
     if dist_created:
         os.unlink(index_path)

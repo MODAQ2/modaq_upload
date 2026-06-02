@@ -215,9 +215,10 @@ class TestS3Operations:
             # Direct files only; nested files belong to the subfolders.
             assert result["file_count"] == 2
             assert result["folder_count"] == 2
+            assert result["capped"] is False
 
-    def test_get_prefix_counts_paginates(self) -> None:
-        """Counts are accurate beyond a single 1000-key page."""
+    def test_get_prefix_counts_bounded_to_one_page(self) -> None:
+        """A level larger than one page is bounded to a single call and capped."""
         with mock_aws():
             client = boto3.client("s3", region_name="us-west-2")
             client.create_bucket(
@@ -230,8 +231,53 @@ class TestS3Operations:
             result = s3_service.get_prefix_counts(client, "test-bucket", prefix="data/")
 
             assert result["success"] is True
-            assert result["file_count"] == 1500
+            # One page only (no enumeration of all 1500): counts are a lower bound.
+            assert result["capped"] is True
+            assert result["file_count"] == 1000
             assert result["folder_count"] == 0
+
+    def test_get_prefix_counts_caps_large_levels(self) -> None:
+        """Counting stops at max_items and flags the result as capped."""
+        with mock_aws():
+            client = boto3.client("s3", region_name="us-west-2")
+            client.create_bucket(
+                Bucket="test-bucket",
+                CreateBucketConfiguration={"LocationConstraint": "us-west-2"},
+            )
+            for i in range(60):
+                client.put_object(Bucket="test-bucket", Key=f"data/file{i:04d}.mcap", Body=b"x")
+
+            result = s3_service.get_prefix_counts(
+                client, "test-bucket", prefix="data/", max_items=25
+            )
+
+            assert result["success"] is True
+            assert result["file_count"] == 25
+            assert result["capped"] is True
+
+    def test_get_prefix_counts_caps_folder_heavy_levels(self) -> None:
+        """A level that is all subfolders (no files) is bounded too.
+
+        This is the bucket-root case: a files-only cap would never trip and would
+        page through every folder name. The total-entry cap must catch it.
+        """
+        with mock_aws():
+            client = boto3.client("s3", region_name="us-west-2")
+            client.create_bucket(
+                Bucket="test-bucket",
+                CreateBucketConfiguration={"LocationConstraint": "us-west-2"},
+            )
+            # 60 distinct top-level "folders", zero files at this level.
+            for i in range(60):
+                client.put_object(Bucket="test-bucket", Key=f"folder{i:04d}/data.mcap", Body=b"x")
+
+            result = s3_service.get_prefix_counts(client, "test-bucket", prefix="", max_items=25)
+
+            assert result["success"] is True
+            assert result["file_count"] == 0
+            assert result["capped"] is True
+            # Bounded: we did not enumerate all 60 folders.
+            assert result["folder_count"] <= 25
 
     def test_validate_bucket_access_success(self) -> None:
         """Test validate_bucket_access for accessible bucket."""
@@ -355,3 +401,25 @@ class TestCreateS3Client:
         s3_service.create_s3_client("test-profile")
 
         mock_session.assert_called_once_with(profile_name="test-profile", region_name="us-west-2")
+
+    @patch("boto3.Session")
+    def test_caches_client_per_profile_region(self, mock_session: MagicMock) -> None:
+        """Repeated calls reuse the cached client instead of rebuilding a session."""
+        mock_session.return_value.client.return_value = MagicMock()
+
+        first = s3_service.create_s3_client("p", "us-west-2")
+        second = s3_service.create_s3_client("p", "us-west-2")
+
+        assert first is second
+        mock_session.assert_called_once()
+
+    @patch("boto3.Session")
+    def test_reset_cache_forces_rebuild(self, mock_session: MagicMock) -> None:
+        """After a reset the next call builds a fresh session."""
+        mock_session.return_value.client.return_value = MagicMock()
+
+        s3_service.create_s3_client("p", "us-west-2")
+        s3_service.reset_s3_client_cache()
+        s3_service.create_s3_client("p", "us-west-2")
+
+        assert mock_session.call_count == 2
