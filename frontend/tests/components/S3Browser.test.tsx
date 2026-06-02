@@ -8,9 +8,16 @@ vi.mock('../../src/api/client.ts', () => ({
   apiGet: vi.fn(),
 }));
 
+// Mock the client-side logger so timing reports don't fire real network calls.
+vi.mock('../../src/utils/errorReporter.ts', () => ({
+  reportClientEvent: vi.fn(),
+}));
+
 import { apiGet } from '../../src/api/client.ts';
+import { reportClientEvent } from '../../src/utils/errorReporter.ts';
 
 const mockApiGet = vi.mocked(apiGet);
+const mockReportClientEvent = vi.mocked(reportClientEvent);
 
 const STATS_RESPONSE = {
   success: true,
@@ -56,6 +63,7 @@ const MOCK_SUBFOLDER_RESPONSE = {
 describe('S3Browser', () => {
   beforeEach(() => {
     mockApiGet.mockReset();
+    mockReportClientEvent.mockReset();
   });
 
   afterEach(() => {
@@ -71,7 +79,7 @@ describe('S3Browser', () => {
     expect(screen.queryByText('Loading files...')).not.toBeInTheDocument();
   });
 
-  it('keeps the current list visible while navigating to another folder', async () => {
+  it('clears the previous folder while navigating, then shows the new one', async () => {
     const user = userEvent.setup();
     let resolveSecond: ((v: unknown) => void) | undefined;
     let listCall = 0;
@@ -79,7 +87,7 @@ describe('S3Browser', () => {
       if (url === '/api/files/stats') return Promise.resolve(STATS_RESPONSE);
       listCall += 1;
       if (listCall === 1) return Promise.resolve(MOCK_LIST_RESPONSE);
-      // Second navigation: keep it pending so we can assert the old list stays.
+      // Second navigation: keep it pending so we can observe the loading state.
       return new Promise((resolve) => {
         resolveSecond = resolve;
       });
@@ -93,9 +101,9 @@ describe('S3Browser', () => {
 
     await user.click(screen.getByText('year=2024'));
 
-    // While the next folder is still loading, the previous list is still shown
-    // (not blanked) and the loading bar is visible.
-    expect(screen.getByText('test.mcap')).toBeInTheDocument();
+    // The previous folder's rows are cleared immediately so the parent's
+    // contents don't linger under the new breadcrumb. The loading bar shows.
+    expect(screen.queryByText('test.mcap')).not.toBeInTheDocument();
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
 
     resolveSecond?.(MOCK_SUBFOLDER_RESPONSE);
@@ -237,6 +245,42 @@ describe('S3Browser', () => {
 
     await waitFor(() => {
       expect(screen.getByText('This folder contains 1 subfolder and 1 file.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows an "over N items" note when counting was capped', async () => {
+    mockApi([MOCK_LIST_RESPONSE], {
+      success: true,
+      prefix: '',
+      folder_count: 2000,
+      file_count: 0,
+      capped: true,
+    });
+    render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Large folder — over 2,000 items.')).toBeInTheDocument();
+    });
+  });
+
+  it('reports list and stats request timings to the client logger', async () => {
+    mockApi([MOCK_LIST_RESPONSE]);
+    render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('test.mcap')).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const events = mockReportClientEvent.mock.calls.map((c) => c[0]);
+      expect(events).toContain('s3_list_timing');
+      expect(events).toContain('s3_stats_timing');
+    });
+
+    const listCall = mockReportClientEvent.mock.calls.find((c) => c[0] === 's3_list_timing');
+    expect(listCall?.[2]).toMatchObject({
+      endpoint: '/api/files/list',
+      duration_ms: expect.any(Number),
     });
   });
 
