@@ -29,12 +29,15 @@ def list_files() -> tuple[Response, int]:
     Query parameters:
         prefix: S3 prefix to filter by (default: "")
         delimiter: Delimiter for grouping (default: "/")
+        token: Continuation token from a previous response's next_token, to fetch
+            the next page of a folder with more results than fit in one page
 
     Returns:
         JSON response with folders and files
     """
     prefix = request.args.get("prefix", "")
     delimiter = request.args.get("delimiter", "/")
+    token = request.args.get("token") or None
 
     try:
         client = s3_service.create_s3_client(
@@ -47,6 +50,7 @@ def list_files() -> tuple[Response, int]:
             g.settings.s3_bucket,
             prefix=prefix,
             delimiter=delimiter,
+            continuation_token=token,
         )
 
         if not result["success"]:
@@ -89,6 +93,77 @@ def get_file_info() -> tuple[Response, int]:
         )
 
         result = s3_service.get_object_metadata(
+            client,
+            g.settings.s3_bucket,
+            key,
+        )
+
+        if not result["success"]:
+            return jsonify({"error": result["error"]}), 404
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@files_bp.route("/stats", methods=["GET"])
+def get_prefix_stats() -> tuple[Response, int]:
+    """Get subfolder and file counts for a folder (one level).
+
+    Query parameters:
+        prefix: S3 prefix to summarize (default: "" = bucket root)
+        delimiter: Delimiter for grouping (default: "/")
+
+    Returns:
+        JSON response with folder_count and file_count
+    """
+    prefix = request.args.get("prefix", "")
+    delimiter = request.args.get("delimiter", "/")
+
+    try:
+        client = s3_service.create_s3_client(
+            g.settings.aws_profile,
+            g.settings.aws_region,
+        )
+
+        result = s3_service.get_prefix_counts(
+            client,
+            g.settings.s3_bucket,
+            prefix=prefix,
+            delimiter=delimiter,
+        )
+
+        if not result["success"]:
+            return jsonify({"error": result["error"]}), 500
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@files_bp.route("/download", methods=["GET"])
+def download_file() -> tuple[Response, int]:
+    """Generate a presigned URL for downloading an S3 object.
+
+    Query parameters:
+        key: S3 object key
+
+    Returns:
+        JSON response with a presigned download URL
+    """
+    key = request.args.get("key", "")
+    if not key:
+        return jsonify({"error": "Object key required"}), 400
+
+    try:
+        client = s3_service.create_s3_client(
+            g.settings.aws_profile,
+            g.settings.aws_region,
+        )
+
+        result = s3_service.generate_presigned_download_url(
             client,
             g.settings.s3_bucket,
             key,
