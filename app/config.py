@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,55 @@ from dotenv import load_dotenv
 
 # Base directory for the project
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Folder name used under the OS-specific application-data location for logs.
+APP_DIR_NAME = "modaq_upload"
+
+
+def get_default_log_directory(app_name: str = APP_DIR_NAME) -> Path:
+    """Return the OS-appropriate directory for application logs.
+
+    Follows each platform's conventions for per-user application data so logs
+    live in a writable, persistent, standard location instead of inside the
+    repository (which breaks when the app is installed read-only or moved):
+
+    - Windows: ``%LOCALAPPDATA%\\<app_name>\\logs``
+      (e.g. ``C:\\Users\\you\\AppData\\Local\\modaq_upload\\logs``)
+    - macOS:   ``~/Library/Logs/<app_name>``
+    - Linux/other POSIX: ``$XDG_STATE_HOME/<app_name>/logs``
+      (defaults to ``~/.local/state/<app_name>/logs`` per the XDG Base Directory
+      spec, which places logs under "state" data)
+    """
+    home = Path.home()
+
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA")
+        root = Path(base) if base else home / "AppData" / "Local"
+        return root / app_name / "logs"
+
+    if sys.platform == "darwin":
+        return home / "Library" / "Logs" / app_name
+
+    # Linux and other POSIX systems: XDG state directory.
+    base = os.environ.get("XDG_STATE_HOME")
+    root = Path(base) if base else home / ".local" / "state"
+    return root / app_name / "logs"
+
+
+def _is_under_temp_dir(path: Path) -> bool:
+    """True if ``path`` lives inside the OS temp directory.
+
+    A configured log directory under the system temp dir is almost always a
+    stale value leaked from a test run (pytest's ``tempfile.mkdtemp``), not a
+    real log location — production logs must never be written there.
+    """
+    try:
+        tmp = Path(tempfile.gettempdir()).resolve()
+        resolved = path.resolve()
+        return resolved == tmp or tmp in resolved.parents
+    except OSError:
+        return False
+
 
 # Load environment variables from .env file
 ENV_FILE = BASE_DIR / ".env"
@@ -84,7 +134,7 @@ class Settings:
             "s3_bucket": "",
             "default_upload_folder": "",
             "display_name": "MODAQ Uploader",
-            "log_directory": "logs",
+            "log_directory": str(get_default_log_directory()),
             "file_categories": [
                 {
                     "name": "data",
@@ -148,6 +198,17 @@ class Settings:
             if value is not None:
                 defaults[key] = value
                 provenance[key] = {"source": "env", "env_var": env_var}
+
+        # Repair an empty or temp-dir log_directory (e.g. a path leaked from a
+        # test run that got persisted to settings.json). Fall back to the
+        # OS-standard location so logs never silently write to a temp dir.
+        raw_log_dir = str(defaults.get("log_directory") or "").strip()
+        resolved_log_dir = (
+            Path(raw_log_dir) if Path(raw_log_dir).is_absolute() else BASE_DIR / raw_log_dir
+        )
+        if not raw_log_dir or _is_under_temp_dir(resolved_log_dir):
+            defaults["log_directory"] = str(get_default_log_directory())
+            provenance["log_directory"] = {"source": "builtin"}
 
         self._settings = defaults
         self._provenance = provenance
