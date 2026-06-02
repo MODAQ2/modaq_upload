@@ -12,6 +12,25 @@ import { apiGet } from '../../src/api/client.ts';
 
 const mockApiGet = vi.mocked(apiGet);
 
+const STATS_RESPONSE = {
+  success: true,
+  prefix: '',
+  folder_count: 2,
+  file_count: 1,
+};
+
+// Route apiGet by URL so the /api/files/stats call doesn't consume the queued
+// /api/files/list responses. `listResponses` are returned in order per list call.
+function mockApi(listResponses: unknown[], stats: unknown = STATS_RESPONSE) {
+  let listCall = 0;
+  mockApiGet.mockImplementation((url: string) => {
+    if (url === '/api/files/stats') return Promise.resolve(stats);
+    const idx = Math.min(listCall, listResponses.length - 1);
+    listCall += 1;
+    return Promise.resolve(listResponses[idx]);
+  });
+}
+
 const MOCK_LIST_RESPONSE = {
   success: true,
   folders: [
@@ -43,14 +62,50 @@ describe('S3Browser', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows loading spinner initially', () => {
+  it('shows a thin loading bar (not a full spinner) while fetching', () => {
     mockApiGet.mockReturnValue(new Promise(() => {})); // Never resolves
     render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
-    expect(screen.getByText('Loading files...')).toBeInTheDocument();
+    // The list fetch shows the indeterminate top bar, and never the old
+    // full-panel "Loading files..." spinner.
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    expect(screen.queryByText('Loading files...')).not.toBeInTheDocument();
+  });
+
+  it('keeps the current list visible while navigating to another folder', async () => {
+    const user = userEvent.setup();
+    let resolveSecond: ((v: unknown) => void) | undefined;
+    let listCall = 0;
+    mockApiGet.mockImplementation((url: string) => {
+      if (url === '/api/files/stats') return Promise.resolve(STATS_RESPONSE);
+      listCall += 1;
+      if (listCall === 1) return Promise.resolve(MOCK_LIST_RESPONSE);
+      // Second navigation: keep it pending so we can assert the old list stays.
+      return new Promise((resolve) => {
+        resolveSecond = resolve;
+      });
+    });
+
+    render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('year=2024')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('year=2024'));
+
+    // While the next folder is still loading, the previous list is still shown
+    // (not blanked) and the loading bar is visible.
+    expect(screen.getByText('test.mcap')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+
+    resolveSecond?.(MOCK_SUBFOLDER_RESPONSE);
+    await waitFor(() => {
+      expect(screen.getByText('month=01')).toBeInTheDocument();
+    });
   });
 
   it('renders bucket name and region', async () => {
-    mockApiGet.mockResolvedValue(MOCK_LIST_RESPONSE);
+    mockApi([MOCK_LIST_RESPONSE]);
     render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
 
     await waitFor(() => {
@@ -60,7 +115,7 @@ describe('S3Browser', () => {
   });
 
   it('renders folders and files from the API response', async () => {
-    mockApiGet.mockResolvedValue(MOCK_LIST_RESPONSE);
+    mockApi([MOCK_LIST_RESPONSE]);
     render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
 
     await waitFor(() => {
@@ -73,9 +128,7 @@ describe('S3Browser', () => {
 
   it('navigates into a folder when clicked', async () => {
     const user = userEvent.setup();
-    mockApiGet
-      .mockResolvedValueOnce(MOCK_LIST_RESPONSE) // Initial load
-      .mockResolvedValueOnce(MOCK_SUBFOLDER_RESPONSE); // After click
+    mockApi([MOCK_LIST_RESPONSE, MOCK_SUBFOLDER_RESPONSE]);
 
     render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
 
@@ -101,13 +154,101 @@ describe('S3Browser', () => {
     expect(screen.getByText('Retry')).toBeInTheDocument();
   });
 
-  it('shows empty state when no files or folders', async () => {
-    mockApiGet.mockResolvedValue({
-      success: true,
-      folders: [],
-      files: [],
-      breadcrumbs: [],
+  it('shows a Load more button and appends the next page when clicked', async () => {
+    const user = userEvent.setup();
+    mockApi([
+      {
+        success: true,
+        folders: [],
+        files: [
+          { name: 'a.mcap', key: 'a.mcap', size: 1024, last_modified: '2024-01-15T10:30:00Z' },
+        ],
+        breadcrumbs: [],
+        next_token: 'TOKEN_PAGE_2',
+      },
+      {
+        success: true,
+        folders: [],
+        files: [
+          { name: 'b.mcap', key: 'b.mcap', size: 2048, last_modified: '2024-01-16T10:30:00Z' },
+        ],
+        breadcrumbs: [],
+        next_token: null,
+      },
+    ]);
+
+    render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('a.mcap')).toBeInTheDocument();
     });
+    expect(screen.getByText('Load more')).toBeInTheDocument();
+
+    await user.click(screen.getByText('Load more'));
+
+    // Both pages are now visible and the button is gone (no more pages).
+    await waitFor(() => {
+      expect(screen.getByText('b.mcap')).toBeInTheDocument();
+    });
+    expect(screen.getByText('a.mcap')).toBeInTheDocument();
+    expect(screen.queryByText('Load more')).not.toBeInTheDocument();
+
+    // The second call passed the continuation token.
+    expect(mockApiGet).toHaveBeenLastCalledWith(
+      '/api/files/list',
+      expect.objectContaining({ token: 'TOKEN_PAGE_2' }),
+    );
+  });
+
+  it('does not show Load more when there are no further pages', async () => {
+    mockApi([MOCK_LIST_RESPONSE]);
+    render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('test.mcap')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Load more')).not.toBeInTheDocument();
+  });
+
+  it('shows a note summarizing the folder contents', async () => {
+    mockApi([MOCK_LIST_RESPONSE], {
+      success: true,
+      prefix: '',
+      folder_count: 2,
+      file_count: 1240,
+    });
+    render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('This folder contains 2 subfolders and 1,240 files.'),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('singularizes the note for a single file and folder', async () => {
+    mockApi([MOCK_LIST_RESPONSE], {
+      success: true,
+      prefix: '',
+      folder_count: 1,
+      file_count: 1,
+    });
+    render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('This folder contains 1 subfolder and 1 file.')).toBeInTheDocument();
+    });
+  });
+
+  it('shows empty state when no files or folders', async () => {
+    mockApi([
+      {
+        success: true,
+        folders: [],
+        files: [],
+        breadcrumbs: [],
+      },
+    ]);
     render(<S3Browser bucketName="my-bucket" region="us-west-2" />);
 
     await waitFor(() => {
