@@ -340,6 +340,22 @@ class TestLogServiceSync:
             assert "/month=" in s3_key
             assert "/day=" in s3_key
 
+    def test_sync_default_prefix_is_app_logs(
+        self, log_service: LogService, _mock_settings: Any
+    ) -> None:
+        """Test that logs land under the app_logs/ prefix on S3 by default."""
+        mock_client = MagicMock()
+
+        with _mock_settings:
+            log_service.info("app", "test", "Entry")
+            log_service.sync_logs_to_s3(mock_client, "test-bucket")
+
+        calls = mock_client.upload_file.call_args_list
+        assert len(calls) >= 1
+        for call in calls:
+            s3_key = call[0][2]
+            assert s3_key.startswith("app_logs/")
+
 
 class TestHivePartitioning:
     """Tests for hive-partitioned directory structure."""

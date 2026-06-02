@@ -9,6 +9,7 @@ import io
 import json
 import re
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,16 @@ class LogService:
     def __init__(self) -> None:
         """Initialize the log service."""
         self._write_lock = threading.Lock()
+        self._error_callback: Callable[[], None] | None = None
+
+    def set_error_callback(self, callback: Callable[[], None] | None) -> None:
+        """Register a callback fired (best-effort) after every ERROR-level log.
+
+        Used to trigger an immediate S3 log sync when something goes wrong.
+        The callback must be cheap and non-blocking (e.g. set a threading.Event);
+        it runs on the thread that logged the error.
+        """
+        self._error_callback = callback
 
     def _get_log_dir(self) -> Path:
         """Get the configured log directory, creating it if needed."""
@@ -101,6 +112,14 @@ class LogService:
             log_file = self._get_current_log_file()
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
+
+        # Fire the error hook outside the write lock so a slow/failing callback
+        # can never block logging. Never let it raise back into the caller.
+        if entry["level"] == "ERROR" and self._error_callback is not None:
+            try:
+                self._error_callback()
+            except Exception:
+                pass
 
     def info(
         self,
@@ -568,7 +587,7 @@ class LogService:
         self,
         s3_client: Any,
         bucket: str,
-        prefix: str = "logs/",
+        prefix: str = "app_logs/",
     ) -> dict[str, Any]:
         """Upload new/changed log files (JSONL + CSV) to S3.
 
