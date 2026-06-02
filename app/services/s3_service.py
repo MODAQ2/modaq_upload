@@ -63,8 +63,20 @@ def get_available_profiles() -> list[str]:
     return sorted(profiles)
 
 
+# Cache S3 clients by (profile, region). Building a boto3 Session resolves
+# credentials (which for SSO/assume-role can mean a network round-trip), so
+# rebuilding one per request added latency to every list/stats/download call.
+# boto3 low-level clients are thread-safe for making calls, so a shared instance
+# is safe across the dev server's request threads.
+_CLIENT_CACHE: dict[tuple[str, str], S3Client] = {}
+
+
 def create_s3_client(profile: str, region: str = "us-west-2") -> S3Client:
-    """Create an S3 client using the specified AWS profile.
+    """Create (or reuse) an S3 client for the given AWS profile and region.
+
+    Clients are cached by (profile, region) so repeated calls — e.g. the parallel
+    list/stats requests on the file browser — don't each rebuild a session and
+    re-resolve credentials.
 
     Args:
         profile: AWS profile name from ~/.aws/credentials or ~/.aws/config
@@ -76,9 +88,24 @@ def create_s3_client(profile: str, region: str = "us-west-2") -> S3Client:
     Raises:
         NoCredentialsError: If credentials are not found
     """
+    cache_key = (profile, region)
+    cached = _CLIENT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     session = boto3.Session(profile_name=profile, region_name=region)
     client: S3Client = session.client("s3")
+    _CLIENT_CACHE[cache_key] = client
     return client
+
+
+def reset_s3_client_cache() -> None:
+    """Clear the cached S3 clients.
+
+    Call after changing AWS settings so the next request rebuilds the client with
+    the new profile/region/credentials.
+    """
+    _CLIENT_CACHE.clear()
 
 
 def check_file_exists(client: S3Client, bucket: str, key: str) -> bool:
@@ -276,49 +303,71 @@ def list_bucket_objects(
         }
 
 
+# Max entries (subfolders + files) get_prefix_counts looks at. The count is a
+# nice-to-have, so it costs exactly ONE list_objects_v2 call (a single page) and
+# never enumerates a large level. S3 counts both keys and common prefixes toward
+# MaxKeys, so this bounds work whether the level is files, folders, or a mix.
+# Capped at S3's 1,000-key page maximum.
+STATS_MAX_ITEMS = 1_000
+
+
 def get_prefix_counts(
     client: S3Client,
     bucket: str,
     prefix: str = "",
     delimiter: str = "/",
+    max_items: int = STATS_MAX_ITEMS,
 ) -> dict[str, Any]:
-    """Count subfolders and files directly under a prefix (one level).
+    """Count subfolders and files directly under a prefix (one level only).
 
-    Fully paginates the level so the counts are accurate regardless of how many
-    objects it contains, unlike ``list_bucket_objects`` which returns one page.
-    This is count-only (no sizes or metadata) to keep it cheap.
+    Uses ``delimiter`` so S3 returns just the immediate level — this never recurses
+    into subfolders. It makes a SINGLE ``list_objects_v2`` request (one page of up
+    to ``max_items`` entries) and reads ``IsTruncated`` to know whether there are
+    more. So it always costs one S3 call no matter how large the level is; when the
+    level overflows the page, ``capped`` is True and the counts are lower bounds.
 
     Args:
         client: S3 client
         bucket: S3 bucket name
         prefix: Object key prefix for the folder to summarize
         delimiter: Delimiter for grouping (default: /)
+        max_items: Page size — entries (folders + files) to look at, clamped to
+            S3's 1,000 maximum; default ``STATS_MAX_ITEMS``
 
     Returns:
-        Dictionary with ``folder_count`` and ``file_count`` for this level
+        Dictionary with ``folder_count``, ``file_count``, and ``capped`` for this
+        level. When ``capped`` is True the true totals are higher than reported.
     """
     folder_prefixes: set[str] = set()
     file_count = 0
 
     try:
-        paginator = client.get_paginator("list_objects_v2")
-        page_iterator = paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter=delimiter)
+        max_keys = max(1, min(max_items, 1000))
+        response = client.list_objects_v2(
+            Bucket=bucket,
+            Prefix=prefix,
+            Delimiter=delimiter,
+            MaxKeys=max_keys,
+        )
 
-        for page in page_iterator:
-            for prefix_info in page.get("CommonPrefixes") or []:
-                folder_prefixes.add(prefix_info.get("Prefix", ""))
-            for obj in page.get("Contents") or []:
-                key = obj.get("Key", "")
-                # Skip the prefix placeholder object and any directory markers.
-                if key == prefix or not key.split("/")[-1]:
-                    continue
-                file_count += 1
+        for prefix_info in response.get("CommonPrefixes") or []:
+            folder_prefixes.add(prefix_info.get("Prefix", ""))
+        for obj in response.get("Contents") or []:
+            key = obj.get("Key", "")
+            # Skip the prefix placeholder object and any directory markers.
+            if key == prefix or not key.split("/")[-1]:
+                continue
+            file_count += 1
+
+        # IsTruncated means the level has more entries than fit in this one page.
+        capped = bool(response.get("IsTruncated", False))
 
         return {
             "success": True,
             "prefix": prefix,
             "folder_count": len(folder_prefixes),
             "file_count": file_count,
+            "capped": capped,
             "error": None,
         }
     except ClientError as e:
@@ -327,6 +376,7 @@ def get_prefix_counts(
             "prefix": prefix,
             "folder_count": 0,
             "file_count": 0,
+            "capped": False,
             "error": str(e),
         }
 
