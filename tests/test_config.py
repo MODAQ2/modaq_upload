@@ -103,3 +103,77 @@ class TestLogDirectorySanitization:
         settings = self._load_with_settings(monkeypatch, tmp_path, {"log_directory": str(custom)})
 
         assert settings.log_directory == custom
+
+
+class TestPartitionSanitization:
+    """_sanitize_partition_value keeps values safe as a single path segment."""
+
+    def test_replaces_path_hostile_chars(self) -> None:
+        assert config._sanitize_partition_value("a/b\\c=d e") == "a-b-c-d-e"
+
+    def test_strips_surrounding_separators(self) -> None:
+        assert config._sanitize_partition_value("  spaced  ") == "spaced"
+
+    def test_empty_falls_back_to_unknown(self) -> None:
+        assert config._sanitize_partition_value("   ") == "unknown"
+
+    def test_os_helpers_have_no_separators(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(config.platform, "system", lambda: "Mac OS/X")
+        monkeypatch.setattr(config.platform, "release", lambda: "25.4 .0")
+
+        assert config.get_os_name() == "Mac-OS-X"
+        assert config.get_os_version() == "25.4-.0"
+
+
+class TestInstallId:
+    """A persistent per-install ID is generated once and reused thereafter."""
+
+    def _load_with_settings(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, data: dict[str, object]
+    ) -> config.Settings:
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(data), encoding="utf-8")
+        monkeypatch.setattr(config, "SETTINGS_FILE", settings_file)
+        config.Settings._instance = None
+        return config.Settings()
+
+    def teardown_method(self) -> None:
+        config.Settings._instance = None
+
+    def test_generates_and_persists_when_absent(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        settings = self._load_with_settings(monkeypatch, tmp_path, {"log_directory": str(tmp_path)})
+
+        generated = settings.install_id
+        assert generated  # non-empty
+        # Persisted to settings.json
+        on_disk = json.loads((tmp_path / "settings.json").read_text())
+        assert on_disk["install_id"] == generated
+
+    def test_stable_across_reads(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        settings = self._load_with_settings(monkeypatch, tmp_path, {"log_directory": str(tmp_path)})
+        assert settings.install_id == settings.install_id
+
+    def test_existing_value_preserved(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        settings = self._load_with_settings(
+            monkeypatch, tmp_path, {"log_directory": str(tmp_path), "install_id": "preset123456"}
+        )
+        assert settings.install_id == "preset123456"
+
+    def test_session_partitions_shape(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        self._load_with_settings(
+            monkeypatch, tmp_path, {"log_directory": str(tmp_path), "install_id": "preset123456"}
+        )
+        monkeypatch.setattr(config.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(config.platform, "release", lambda: "6.1.0")
+
+        assert config.get_session_partitions() == [
+            "os=Linux",
+            "os_version=6.1.0",
+            "session=preset123456",
+        ]
