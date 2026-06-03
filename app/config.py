@@ -3,10 +3,13 @@
 import functools
 import json
 import os
+import platform
+import re
 import subprocess
 import sys
 import tempfile
 import tomllib
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +105,44 @@ def get_package_version() -> str:
 def get_package_name() -> str:
     """Get the package name from pyproject.toml."""
     return _read_pyproject_field("name", "modaq-uploader")
+
+
+def _sanitize_partition_value(value: str) -> str:
+    """Make a string safe to use as a hive partition value (a path segment).
+
+    Replaces path-hostile characters (slashes, ``=``, and whitespace) with ``-`` so
+    the value can't break out of its partition directory or confuse hive parsing.
+    Falls back to ``"unknown"`` when the result is empty.
+    """
+    cleaned = re.sub(r"[/\\=\s]+", "-", value.strip()).strip("-")
+    return cleaned or "unknown"
+
+
+def get_os_name() -> str:
+    """Return a partition-safe OS name (e.g. ``Darwin``/``Windows``/``Linux``)."""
+    return _sanitize_partition_value(platform.system())
+
+
+def get_os_version() -> str:
+    """Return a partition-safe OS version (e.g. ``25.4.0``).
+
+    Uses ``platform.release()`` for cross-platform uniformity (on macOS this is the
+    Darwin kernel version; ``platform.mac_ver()[0]`` would give the product version).
+    """
+    return _sanitize_partition_value(platform.release())
+
+
+def get_session_partitions() -> list[str]:
+    """Return hive partition segments identifying this install's log session.
+
+    Combines OS, OS version, and a persistent per-install ID so logs from multiple
+    machines syncing to one S3 bucket land at distinct, queryable paths.
+    """
+    return [
+        f"os={get_os_name()}",
+        f"os_version={get_os_version()}",
+        f"session={get_settings().install_id}",
+    ]
 
 
 class Settings:
@@ -272,6 +313,20 @@ class Settings:
     def display_name(self) -> str:
         """Get the display name for the application."""
         return str(self._settings["display_name"])
+
+    @property
+    def install_id(self) -> str:
+        """Get a stable per-install identifier, generating and persisting it once.
+
+        Stored in the gitignored settings.json so it survives restarts and stays
+        unique per machine. Used to give each install's logs a distinct S3 path.
+        """
+        existing = self._settings.get("install_id")
+        if existing:
+            return str(existing)
+        new_id = uuid.uuid4().hex[:12]
+        self.set("install_id", new_id)
+        return new_id
 
     @property
     def log_directory(self) -> Path:

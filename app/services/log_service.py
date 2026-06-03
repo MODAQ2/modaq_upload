@@ -1,7 +1,10 @@
 """JSONL logging service for application events.
 
-Writes one JSON object per line to hive-partitioned daily .jsonl files.
+Writes one JSON object per line to hive-partitioned daily .jsonl files. Files are
+partitioned by date (year/month/day) and then by session (os/os_version/session) so
+multiple installs can sync to one S3 bucket without overwriting each other.
 DuckDB-compatible: SELECT * FROM read_json_auto('logs/json/**/events.jsonl', hive_partitioning=true)
+exposes year, month, day, os, os_version, and session as columns.
 """
 
 import csv
@@ -14,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.config import get_settings
+from app.config import get_session_partitions, get_settings
 
 
 class LogService:
@@ -44,17 +47,24 @@ class LogService:
     def _get_hive_dir(self, subdir: str, dt: datetime) -> Path:
         """Build a hive-partitioned directory path and create it.
 
+        The path is partitioned by date and then by this install's session
+        (OS, OS version, install ID) so logs from multiple machines syncing to one
+        S3 bucket land at distinct, queryable paths instead of overwriting each other.
+
         Args:
             subdir: Top-level subdirectory ('json' or 'csv')
             dt: Datetime to partition by
 
         Returns:
-            Path like logs/json/year=2026/month=02/day=08/
+            Path like
+            logs/json/year=2026/month=02/day=08/os=Darwin/os_version=25.4.0/session=ab12cd34/
         """
         log_dir = self._get_log_dir()
         hive_dir = (
             log_dir / subdir / f"year={dt.year:04d}" / f"month={dt.month:02d}" / f"day={dt.day:02d}"
         )
+        for segment in get_session_partitions():
+            hive_dir = hive_dir / segment
         hive_dir.mkdir(parents=True, exist_ok=True)
         return hive_dir
 
@@ -329,14 +339,12 @@ class LogService:
                 dt = datetime.strptime(date, "%Y-%m-%d")
             except ValueError:
                 return {"entries": [], "total": 0, "offset": offset, "limit": limit}
-            hive_path = (
-                json_dir
-                / f"year={dt.year:04d}"
-                / f"month={dt.month:02d}"
-                / f"day={dt.day:02d}"
-                / "events.jsonl"
+            day_dir = (
+                json_dir / f"year={dt.year:04d}" / f"month={dt.month:02d}" / f"day={dt.day:02d}"
             )
-            files = [hive_path] if hive_path.exists() else []
+            # events.jsonl now lives under session sub-dirs (os=/os_version=/session=),
+            # and a synced-down bucket may hold several sessions for one day.
+            files = sorted(day_dir.rglob("events.jsonl")) if day_dir.exists() else []
         else:
             if json_dir.exists():
                 files = sorted(json_dir.rglob("events.jsonl"), reverse=True)
