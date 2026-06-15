@@ -205,6 +205,87 @@ class TestFilesAPI:
         response = client.get("/api/files/info")
         assert response.status_code == 400
 
+    @patch("app.routes.files.s3_service")
+    def test_prefix_stats_success(self, mock_s3: MagicMock, client: FlaskClient) -> None:
+        """Test the stats endpoint returns folder and file counts."""
+        client.put(
+            "/api/settings",
+            data=json.dumps({"s3_bucket": "test-bucket"}),
+            content_type="application/json",
+        )
+
+        mock_s3.create_s3_client.return_value = MagicMock()
+        mock_s3.get_prefix_counts.return_value = {
+            "success": True,
+            "prefix": "root/",
+            "folder_count": 2,
+            "file_count": 42,
+            "error": None,
+        }
+
+        response = client.get("/api/files/stats", query_string={"prefix": "root/"})
+        assert response.status_code == 200
+
+        data = json.loads(response.data)
+        assert data["success"] is True
+        assert data["folder_count"] == 2
+        assert data["file_count"] == 42
+
+    def test_download_file_no_key(self, client: FlaskClient) -> None:
+        """Test download without key parameter returns 400."""
+        client.put(
+            "/api/settings",
+            data=json.dumps({"s3_bucket": "test-bucket"}),
+            content_type="application/json",
+        )
+        response = client.get("/api/files/download")
+        assert response.status_code == 400
+
+    @patch("app.routes.files.s3_service")
+    def test_download_file_success(self, mock_s3: MagicMock, client: FlaskClient) -> None:
+        """Test download returns a presigned URL."""
+        client.put(
+            "/api/settings",
+            data=json.dumps({"s3_bucket": "test-bucket"}),
+            content_type="application/json",
+        )
+
+        mock_s3.create_s3_client.return_value = MagicMock()
+        mock_s3.generate_presigned_download_url.return_value = {
+            "success": True,
+            "url": "https://s3.example.com/test/file.mcap?sig=abc",
+            "key": "test/file.mcap",
+            "filename": "file.mcap",
+            "error": None,
+        }
+
+        response = client.get("/api/files/download", query_string={"key": "test/file.mcap"})
+        assert response.status_code == 200
+
+        data = json.loads(response.data)
+        assert data["success"] is True
+        assert data["url"].startswith("https://")
+        assert data["filename"] == "file.mcap"
+
+    @patch("app.routes.files.s3_service")
+    def test_download_file_not_found(self, mock_s3: MagicMock, client: FlaskClient) -> None:
+        """Test download of a missing object returns 404."""
+        client.put(
+            "/api/settings",
+            data=json.dumps({"s3_bucket": "test-bucket"}),
+            content_type="application/json",
+        )
+
+        mock_s3.create_s3_client.return_value = MagicMock()
+        mock_s3.generate_presigned_download_url.return_value = {
+            "success": False,
+            "key": "missing/file.mcap",
+            "error": "File 'file.mcap' not found",
+        }
+
+        response = client.get("/api/files/download", query_string={"key": "missing/file.mcap"})
+        assert response.status_code == 404
+
 
 class TestLogsAPI:
     """Tests for logs API endpoints."""

@@ -189,6 +189,35 @@ def _register_logging_hooks(app: Flask) -> None:
         return jsonify({"error": "Internal server error"}), 500
 
 
+def _start_s3_warmup() -> None:
+    """Pre-resolve AWS credentials and open an S3 connection in the background.
+
+    The first S3 call in a fresh process pays a one-time cost — credential
+    resolution (which for SSO/assume-role can be slow) plus TLS connection setup.
+    Without warming, that cost lands on the user's first file-browser request,
+    making the initial listing feel slow even though warm calls are ~tens of ms.
+    This does the cold work up front, off the request path, and swallows all
+    errors (no bucket/credentials configured yet is fine).
+    """
+
+    def _warm() -> None:
+        try:
+            settings = get_settings()
+            bucket = settings.s3_bucket
+            if not bucket:
+                return
+            from app.services import s3_service
+
+            client = s3_service.create_s3_client(settings.aws_profile, settings.aws_region)
+            # Cheap call that forces credential resolution + a live connection.
+            client.head_bucket(Bucket=bucket)
+        except Exception:
+            # Warmup is best-effort; the real request will surface any error.
+            pass
+
+    threading.Thread(target=_warm, name="s3-warmup", daemon=True).start()
+
+
 def create_app() -> Flask:
     """Create and configure the Flask application."""
     app = Flask(__name__)
@@ -225,6 +254,9 @@ def create_app() -> Flask:
 
     # Automatic request/error logging hooks
     _register_logging_hooks(app)
+
+    # Warm the S3 client/credentials so the first file-browser request isn't cold
+    _start_s3_warmup()
 
     # Start background SSE cleanup thread
     _start_sse_cleanup()

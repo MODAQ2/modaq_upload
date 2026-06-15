@@ -67,9 +67,7 @@ def _make_real_files(n: int) -> list[Path]:
 
 
 class TestLargeJobPersistence:
-    def test_create_job_above_threshold_writes_to_db(
-        self, isolated_storage: JobStorage
-    ) -> None:
+    def test_create_job_above_threshold_writes_to_db(self, isolated_storage: JobStorage) -> None:
         manager = _make_large_job_manager(threshold=3)
         paths = _make_real_files(5)
         try:
@@ -87,9 +85,7 @@ class TestLargeJobPersistence:
                     p.unlink()
             paths[0].parent.rmdir()
 
-    def test_below_threshold_does_not_use_db(
-        self, isolated_storage: JobStorage
-    ) -> None:
+    def test_below_threshold_does_not_use_db(self, isolated_storage: JobStorage) -> None:
         manager = _make_large_job_manager(threshold=10)
         paths = _make_real_files(3)
         try:
@@ -103,9 +99,7 @@ class TestLargeJobPersistence:
                     p.unlink()
             paths[0].parent.rmdir()
 
-    def test_terminal_file_transitions_mirror_to_db(
-        self, isolated_storage: JobStorage
-    ) -> None:
+    def test_terminal_file_transitions_mirror_to_db(self, isolated_storage: JobStorage) -> None:
         manager = _make_large_job_manager(threshold=3)
         paths = _make_real_files(4)
         try:
@@ -133,9 +127,7 @@ class TestLargeJobPersistence:
                     p.unlink()
             paths[0].parent.rmdir()
 
-    def test_persist_job_terminal_updates_job_row(
-        self, isolated_storage: JobStorage
-    ) -> None:
+    def test_persist_job_terminal_updates_job_row(self, isolated_storage: JobStorage) -> None:
         manager = _make_large_job_manager(threshold=3)
         paths = _make_real_files(3)
         try:
@@ -189,9 +181,7 @@ class TestStorageHookFailureTolerance:
 
 
 class TestSetFileStatusIgnoresDbWhenFlagOff:
-    def test_use_db_false_means_no_storage_calls(
-        self, isolated_storage: JobStorage
-    ) -> None:
+    def test_use_db_false_means_no_storage_calls(self, isolated_storage: JobStorage) -> None:
         """A standalone UploadJob with _use_db=False never touches storage."""
         job = UploadJob(job_id="lonely-job")
         job.files.append(FileUploadState("f1", "/p/f1", 100))

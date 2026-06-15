@@ -63,6 +63,10 @@ def update_settings() -> tuple[Response, int]:
 
     settings.update(filtered_data)
 
+    # Changing the profile/region invalidates any cached S3 client.
+    if "aws_profile" in filtered_data or "aws_region" in filtered_data:
+        s3_service.reset_s3_client_cache()
+
     log = get_log_service()
     log.info(
         "settings",

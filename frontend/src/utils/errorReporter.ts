@@ -87,3 +87,20 @@ export function reportClientError(message: string, metadata?: Record<string, unk
     metadata: { ...baseMetadata(), ...metadata },
   });
 }
+
+/**
+ * Report a non-error client-side event (e.g. a request-timing measurement) at
+ * INFO level. Lands in the same JSONL log pipeline + S3 sync as backend logs.
+ */
+export function reportClientEvent(
+  event: string,
+  message: string,
+  metadata?: Record<string, unknown>,
+): void {
+  report({
+    level: 'INFO',
+    event,
+    message,
+    metadata: { ...baseMetadata(), ...metadata },
+  });
+}

@@ -4,6 +4,7 @@ settings.json
 
 # SQLite cache
 modaq_upload_cache.db
+s3_cache.db
 
 # Log files
 /logs/
