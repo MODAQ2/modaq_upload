@@ -38,7 +38,7 @@ interface LargeFolderUploadState {
   reset: () => void;
 }
 
-function defaultPrefix(): string {
+export function defaultPrefix(): string {
   const now = new Date();
   const pad = (n: number, len = 2) => String(n).padStart(len, '0');
   return `user_upload_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
@@ -50,7 +50,7 @@ const initialState = {
   s3Uri: null,
   cmd: null,
   folderPath: null,
-  s3Prefix: defaultPrefix(),
+  s3Prefix: '',
   lines: [],
   status: null,
   returnCode: null,
@@ -95,5 +95,5 @@ export const useLargeFolderUploadStore = create<LargeFolderUploadState>((set, ge
 
   setError: (error) => set({ error, phase: 'done', status: 'failed' }),
 
-  reset: () => set({ ...initialState, s3Prefix: defaultPrefix() }),
+  reset: () => set({ ...initialState }),
 }));
