@@ -115,9 +115,9 @@ def test_throttled_progress_callback_coalesces_to_4_hz() -> None:
     # We fired hundreds of times but only ~4 Hz should have emitted.
     assert emit_count > 50, "loop should have run many iterations"
     max_expected = int(elapsed / SSE_EMIT_INTERVAL_SECONDS) + 2
-    assert (
-        mock_sse.send_event.call_count <= max_expected
-    ), f"emits={mock_sse.send_event.call_count} > cap={max_expected}"
+    assert mock_sse.send_event.call_count <= max_expected, (
+        f"emits={mock_sse.send_event.call_count} > cap={max_expected}"
+    )
 
 
 def test_throttled_progress_callback_always_emits_terminal() -> None:

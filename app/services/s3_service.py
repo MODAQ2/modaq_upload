@@ -9,6 +9,7 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import ClientError, NoCredentialsError
 from mypy_boto3_s3 import S3Client
+from mypy_boto3_s3.type_defs import PaginatorConfigTypeDef
 
 
 class UploadCancelledError(Exception):
@@ -62,8 +63,20 @@ def get_available_profiles() -> list[str]:
     return sorted(profiles)
 
 
+# Cache S3 clients by (profile, region). Building a boto3 Session resolves
+# credentials (which for SSO/assume-role can mean a network round-trip), so
+# rebuilding one per request added latency to every list/stats/download call.
+# boto3 low-level clients are thread-safe for making calls, so a shared instance
+# is safe across the dev server's request threads.
+_CLIENT_CACHE: dict[tuple[str, str], S3Client] = {}
+
+
 def create_s3_client(profile: str, region: str = "us-west-2") -> S3Client:
-    """Create an S3 client using the specified AWS profile.
+    """Create (or reuse) an S3 client for the given AWS profile and region.
+
+    Clients are cached by (profile, region) so repeated calls — e.g. the parallel
+    list/stats requests on the file browser — don't each rebuild a session and
+    re-resolve credentials.
 
     Args:
         profile: AWS profile name from ~/.aws/credentials or ~/.aws/config
@@ -75,9 +88,24 @@ def create_s3_client(profile: str, region: str = "us-west-2") -> S3Client:
     Raises:
         NoCredentialsError: If credentials are not found
     """
+    cache_key = (profile, region)
+    cached = _CLIENT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     session = boto3.Session(profile_name=profile, region_name=region)
     client: S3Client = session.client("s3")
+    _CLIENT_CACHE[cache_key] = client
     return client
+
+
+def reset_s3_client_cache() -> None:
+    """Clear the cached S3 clients.
+
+    Call after changing AWS settings so the next request rebuilds the client with
+    the new profile/region/credentials.
+    """
+    _CLIENT_CACHE.clear()
 
 
 def check_file_exists(client: S3Client, bucket: str, key: str) -> bool:
@@ -186,40 +214,54 @@ def list_bucket_objects(
     prefix: str = "",
     delimiter: str = "/",
     max_keys: int = 1000,
+    continuation_token: str | None = None,
 ) -> dict[str, Any]:
-    """List objects in an S3 bucket with prefix filtering.
+    """List objects in an S3 bucket with prefix filtering, one page at a time.
+
+    Returns at most ``max_keys`` items (folders + files combined). When more
+    results exist, ``next_token`` is a non-null string the caller passes back as
+    ``continuation_token`` to fetch the next page. This avoids silently truncating
+    folders that contain more than ``max_keys`` objects.
 
     Args:
         client: S3 client
         bucket: S3 bucket name
         prefix: Object key prefix for filtering
         delimiter: Delimiter for grouping (default: /)
-        max_keys: Maximum number of keys to return
+        max_keys: Maximum number of items to return per page
+        continuation_token: Opaque token from a previous call's ``next_token`` to
+            resume listing where the last page left off
 
     Returns:
-        Dictionary containing folders and files
+        Dictionary containing folders, files, and ``next_token`` (None when done)
     """
     folders: list[dict[str, str]] = []
     files: list[dict[str, Any]] = []
 
     try:
+        pagination_config: PaginatorConfigTypeDef = {"MaxItems": max_keys}
+        if continuation_token:
+            pagination_config["StartingToken"] = continuation_token
+
         paginator = client.get_paginator("list_objects_v2")
         page_iterator = paginator.paginate(
             Bucket=bucket,
             Prefix=prefix,
             Delimiter=delimiter,
-            PaginationConfig={"MaxItems": max_keys},
+            PaginationConfig=pagination_config,
         )
 
         for page in page_iterator:
-            # Get common prefixes (folders)
-            for prefix_info in page.get("CommonPrefixes", []):
+            # Get common prefixes (folders). Note: when resuming from a
+            # StartingToken these keys may be present but explicitly None, so
+            # `or []` guards against iterating over None.
+            for prefix_info in page.get("CommonPrefixes") or []:
                 folder_prefix = prefix_info.get("Prefix", "")
                 folder_name = folder_prefix.rstrip("/").split("/")[-1]
                 folders.append({"name": folder_name, "prefix": folder_prefix})
 
             # Get objects (files)
-            for obj in page.get("Contents", []):
+            for obj in page.get("Contents") or []:
                 key = obj.get("Key", "")
                 # Skip the prefix itself if it's listed
                 if key == prefix:
@@ -237,12 +279,16 @@ def list_bucket_objects(
                         }
                     )
 
+        # resume_token is None once all results have been returned.
+        next_token = page_iterator.resume_token
+
         return {
             "success": True,
             "bucket": bucket,
             "prefix": prefix,
             "folders": folders,
             "files": files,
+            "next_token": next_token,
             "error": None,
         }
     except ClientError as e:
@@ -252,6 +298,85 @@ def list_bucket_objects(
             "prefix": prefix,
             "folders": [],
             "files": [],
+            "next_token": None,
+            "error": str(e),
+        }
+
+
+# Max entries (subfolders + files) get_prefix_counts looks at. The count is a
+# nice-to-have, so it costs exactly ONE list_objects_v2 call (a single page) and
+# never enumerates a large level. S3 counts both keys and common prefixes toward
+# MaxKeys, so this bounds work whether the level is files, folders, or a mix.
+# Capped at S3's 1,000-key page maximum.
+STATS_MAX_ITEMS = 1_000
+
+
+def get_prefix_counts(
+    client: S3Client,
+    bucket: str,
+    prefix: str = "",
+    delimiter: str = "/",
+    max_items: int = STATS_MAX_ITEMS,
+) -> dict[str, Any]:
+    """Count subfolders and files directly under a prefix (one level only).
+
+    Uses ``delimiter`` so S3 returns just the immediate level — this never recurses
+    into subfolders. It makes a SINGLE ``list_objects_v2`` request (one page of up
+    to ``max_items`` entries) and reads ``IsTruncated`` to know whether there are
+    more. So it always costs one S3 call no matter how large the level is; when the
+    level overflows the page, ``capped`` is True and the counts are lower bounds.
+
+    Args:
+        client: S3 client
+        bucket: S3 bucket name
+        prefix: Object key prefix for the folder to summarize
+        delimiter: Delimiter for grouping (default: /)
+        max_items: Page size — entries (folders + files) to look at, clamped to
+            S3's 1,000 maximum; default ``STATS_MAX_ITEMS``
+
+    Returns:
+        Dictionary with ``folder_count``, ``file_count``, and ``capped`` for this
+        level. When ``capped`` is True the true totals are higher than reported.
+    """
+    folder_prefixes: set[str] = set()
+    file_count = 0
+
+    try:
+        max_keys = max(1, min(max_items, 1000))
+        response = client.list_objects_v2(
+            Bucket=bucket,
+            Prefix=prefix,
+            Delimiter=delimiter,
+            MaxKeys=max_keys,
+        )
+
+        for prefix_info in response.get("CommonPrefixes") or []:
+            folder_prefixes.add(prefix_info.get("Prefix", ""))
+        for obj in response.get("Contents") or []:
+            key = obj.get("Key", "")
+            # Skip the prefix placeholder object and any directory markers.
+            if key == prefix or not key.split("/")[-1]:
+                continue
+            file_count += 1
+
+        # IsTruncated means the level has more entries than fit in this one page.
+        capped = bool(response.get("IsTruncated", False))
+
+        return {
+            "success": True,
+            "prefix": prefix,
+            "folder_count": len(folder_prefixes),
+            "file_count": file_count,
+            "capped": capped,
+            "error": None,
+        }
+    except ClientError as e:
+        return {
+            "success": False,
+            "prefix": prefix,
+            "folder_count": 0,
+            "file_count": 0,
+            "capped": False,
             "error": str(e),
         }
 
@@ -301,6 +426,59 @@ def get_s3_client_from_settings() -> tuple[S3Client, str]:
     settings = get_settings()
     client = create_s3_client(settings.aws_profile, settings.aws_region)
     return client, settings.s3_bucket
+
+
+def generate_presigned_download_url(
+    client: S3Client,
+    bucket: str,
+    key: str,
+    expires_in: int = 3600,
+) -> dict[str, Any]:
+    """Generate a presigned URL for downloading an S3 object.
+
+    The URL forces a browser download (Content-Disposition: attachment) with the
+    object's original filename. Presigned URLs let the browser fetch directly from
+    S3 rather than proxying large files through Flask.
+
+    Args:
+        client: S3 client
+        bucket: S3 bucket name
+        key: S3 object key
+        expires_in: URL validity in seconds (default: 3600 = 1 hour)
+
+    Returns:
+        Dictionary with the presigned URL or an error
+    """
+    filename = key.split("/")[-1]
+    try:
+        # Confirm the object exists so a missing key returns 404 rather than a
+        # presigned URL that later fails when the user clicks it.
+        client.head_object(Bucket=bucket, Key=key)
+
+        url = client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": bucket,
+                "Key": key,
+                "ResponseContentDisposition": f'attachment; filename="{filename}"',
+            },
+            ExpiresIn=expires_in,
+        )
+        return {
+            "success": True,
+            "url": url,
+            "key": key,
+            "filename": filename,
+            "error": None,
+        }
+    except ClientError as e:
+        error_code = e.response["Error"]["Code"]
+        error_msg = f"File '{filename}' not found" if error_code == "404" else str(e)
+        return {
+            "success": False,
+            "key": key,
+            "error": error_msg,
+        }
 
 
 def get_object_metadata(client: S3Client, bucket: str, key: str) -> dict[str, Any]:

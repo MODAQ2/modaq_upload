@@ -8,13 +8,15 @@
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { cancelLargeFolderSync, startLargeFolderSync } from '../api/largeFolderUpload.ts';
 import FolderPicker from '../components/common/FolderPicker.tsx';
+import S3FolderPicker from '../components/common/S3FolderPicker.tsx';
 import { useAppStore } from '../stores/appStore.ts';
 import {
+  defaultPrefix,
   type SyncProgress,
   type SyncStatus,
   useLargeFolderUploadStore,
@@ -284,6 +286,9 @@ function NamePrefixStep() {
   const settings = useAppStore((s) => s.settings);
   const notifications = useAppStore((s) => s.addNotification);
 
+  // Stable per-mount timestamp folder name for the "Use timestamp default" shortcut.
+  const suggestedName = useMemo(() => defaultPrefix(), []);
+
   const handleBack = useCallback(() => {
     // Return to folder picker — clear folderPath so SetupPhase shows picker again
     setFolderPath('');
@@ -319,35 +324,20 @@ function NamePrefixStep() {
         <div className="flex items-center gap-2">
           <CloudIcon className="w-5 h-5 text-nlr-blue" />
           <h3 className="text-base font-semibold text-nlr-text">
-            Name your cloud destination folder
+            Choose your cloud destination folder
           </h3>
         </div>
 
         <div className="bg-blue-50 border border-blue-200 rounded-md px-3 py-2 text-sm text-blue-800">
-          <span className="font-semibold">The default name is fine.</span> It's a timestamp so each
-          upload gets its own folder in NLR Cloud Storage and nothing gets overwritten. You can
-          change it if you're continuing a previous upload or want a friendlier name.
+          Browse NLR Cloud Storage and pick an existing folder to add to it, or create a new
+          subfolder. Already-uploaded files are skipped automatically — safe to re-run.
         </div>
 
-        <div>
-          <label htmlFor="s3-prefix" className="block text-sm font-medium text-nlr-text mb-1">
-            Destination folder name
-          </label>
-          <input
-            id="s3-prefix"
-            type="text"
-            value={s3Prefix}
-            onChange={(e) => setS3Prefix(e.target.value)}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-nlr-blue"
-            placeholder="user_upload_2025-01-01T12-00-00"
-            // biome-ignore lint/a11y/noAutofocus: focus is intentional — user is here to name the folder
-            autoFocus
-          />
-          <p className="text-xs text-gray-400 mt-1">
-            Files land at{' '}
-            <span className="font-mono">s3://&lt;bucket&gt;/{s3Prefix.trim() || '…'}/</span>
-          </p>
-        </div>
+        <S3FolderPicker
+          bucket={settings?.s3_bucket ?? ''}
+          onSelect={setS3Prefix}
+          suggestedName={suggestedName}
+        />
 
         <div className="flex gap-3 pt-1">
           <button

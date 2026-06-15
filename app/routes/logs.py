@@ -91,6 +91,39 @@ def get_upload_stats() -> tuple[Response, int]:
     return jsonify(stats), 200
 
 
+@logs_bp.route("/client", methods=["POST"])
+def log_client_event() -> tuple[Response, int]:
+    """Record a client-side (browser) event, typically a JS error.
+
+    Frontend global error hooks POST here so browser failures land in the same
+    JSONL pipeline (and S3 sync) as backend logs.
+
+    JSON body:
+        level: INFO/WARNING/ERROR (default ERROR)
+        event: machine-readable event name (default client_error)
+        message: human-readable message
+        metadata: optional dict of extra context (url, stack, userAgent, ...)
+    """
+    data = request.get_json(silent=True) or {}
+
+    level = str(data.get("level", "ERROR")).upper()
+    if level not in ("INFO", "WARNING", "ERROR"):
+        level = "ERROR"
+    event = str(data.get("event", "client_error"))
+    message = str(data.get("message", "")) or "Client-side event"
+
+    metadata = data.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    # Always capture where it came from so logs are attributable.
+    metadata.setdefault("user_agent", request.headers.get("User-Agent", ""))
+    metadata.setdefault("remote_addr", request.remote_addr)
+
+    log = get_log_service()
+    log.log(level, "client", event, message, metadata)
+    return jsonify({"success": True}), 200
+
+
 @logs_bp.route("/sync", methods=["POST"])
 def sync_logs() -> tuple[Response, int]:
     """Trigger S3 sync of log files.

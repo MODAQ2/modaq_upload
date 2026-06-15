@@ -344,6 +344,8 @@ export interface S3ListResponse {
   files: S3File[];
   breadcrumbs: S3Breadcrumb[];
   prefix?: string;
+  /** Opaque continuation token; pass back as `token` to load the next page. Null when no more results. */
+  next_token?: string | null;
   error?: string;
 }
 
@@ -362,6 +364,24 @@ export interface S3File {
 export interface S3Breadcrumb {
   name: string;
   prefix: string;
+}
+
+export interface S3DownloadResponse {
+  success: boolean;
+  url: string;
+  key: string;
+  filename: string;
+  error?: string;
+}
+
+export interface S3StatsResponse {
+  success: boolean;
+  prefix: string;
+  folder_count: number;
+  file_count: number;
+  /** True when file_count hit the server's cap and the real total is higher. */
+  capped?: boolean;
+  error?: string;
 }
 
 // ── Settings types ──

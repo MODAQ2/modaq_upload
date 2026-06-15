@@ -17,9 +17,13 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function apiGet<T>(url: string, params?: Record<string, string>): Promise<T> {
+export async function apiGet<T>(
+  url: string,
+  params?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<T> {
   const qs = params ? `?${new URLSearchParams(params)}` : '';
-  const res = await fetch(`${url}${qs}`);
+  const res = await fetch(`${url}${qs}`, { signal });
   return handleResponse<T>(res);
 }
 

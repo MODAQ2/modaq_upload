@@ -1,7 +1,9 @@
 """Tests for the JSONL log service."""
 
+import contextlib
 import csv
 import json
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.log_service import LogService
+
+# Fixed session partition segments used in tests so paths are deterministic and the
+# real settings.json / platform values are never touched.
+_TEST_SESSION_SEGMENTS = ["os=Darwin", "os_version=25.4.0", "session=testsession01"]
+
+
+def _session_subpath(base: Path) -> Path:
+    """Append the test session partition segments to a date-partitioned dir."""
+    for segment in _TEST_SESSION_SEGMENTS:
+        base = base / segment
+    return base
 
 
 @pytest.fixture
@@ -35,11 +48,27 @@ def log_service(tmp_path: Path) -> LogService:
 
 @pytest.fixture
 def _mock_settings(log_service: LogService) -> Any:
-    """Context manager that patches get_settings for the log service."""
-    return patch(
-        "app.services.log_service.get_settings",
-        return_value=log_service._test_settings_mock,  # type: ignore[attr-defined]
-    )
+    """Context manager that patches get_settings + get_session_partitions.
+
+    Patching get_session_partitions keeps log paths deterministic and prevents the
+    real settings.json / platform values from being read or written during tests.
+    """
+
+    @contextlib.contextmanager
+    def _cm() -> Iterator[None]:
+        with (
+            patch(
+                "app.services.log_service.get_settings",
+                return_value=log_service._test_settings_mock,  # type: ignore[attr-defined]
+            ),
+            patch(
+                "app.services.log_service.get_session_partitions",
+                return_value=list(_TEST_SESSION_SEGMENTS),
+            ),
+        ):
+            yield
+
+    return _cm()
 
 
 def _find_event_files(log_dir: Path) -> list[Path]:
@@ -340,6 +369,22 @@ class TestLogServiceSync:
             assert "/month=" in s3_key
             assert "/day=" in s3_key
 
+    def test_sync_default_prefix_is_app_logs(
+        self, log_service: LogService, _mock_settings: Any
+    ) -> None:
+        """Test that logs land under the app_logs/ prefix on S3 by default."""
+        mock_client = MagicMock()
+
+        with _mock_settings:
+            log_service.info("app", "test", "Entry")
+            log_service.sync_logs_to_s3(mock_client, "test-bucket")
+
+        calls = mock_client.upload_file.call_args_list
+        assert len(calls) >= 1
+        for call in calls:
+            s3_key = call[0][2]
+            assert s3_key.startswith("app_logs/")
+
 
 class TestHivePartitioning:
     """Tests for hive-partitioned directory structure."""
@@ -352,7 +397,7 @@ class TestHivePartitioning:
         with _mock_settings:
             hive_dir = log_service._get_hive_dir("json", dt)
 
-        assert hive_dir == log_dir / "json" / "year=2026" / "month=02" / "day=08"
+        assert hive_dir == _session_subpath(log_dir / "json" / "year=2026" / "month=02" / "day=08")
         assert hive_dir.exists()
 
     def test_hive_dir_csv(self, log_service: LogService, _mock_settings: Any) -> None:
@@ -363,7 +408,7 @@ class TestHivePartitioning:
         with _mock_settings:
             hive_dir = log_service._get_hive_dir("csv", dt)
 
-        assert hive_dir == log_dir / "csv" / "year=2025" / "month=12" / "day=31"
+        assert hive_dir == _session_subpath(log_dir / "csv" / "year=2025" / "month=12" / "day=31")
         assert hive_dir.exists()
 
     def test_extract_date_from_hive_path(self) -> None:
@@ -387,7 +432,7 @@ class TestHivePartitioning:
 
         # Verify the file exists at the hive path
         now = datetime.now(UTC)
-        expected_dir = (
+        expected_dir = _session_subpath(
             log_dir
             / "json"
             / f"year={now.year:04d}"
@@ -398,6 +443,70 @@ class TestHivePartitioning:
         assert events_file.exists()
         entry = json.loads(events_file.read_text().strip())
         assert entry["event"] == "test"
+
+
+class TestSessionPartitioning:
+    """Tests that logs are partitioned per install session (os/os_version/session)."""
+
+    def test_events_written_under_session_partitions(
+        self, log_service: LogService, _mock_settings: Any
+    ) -> None:
+        """The events.jsonl lands under os=/os_version=/session= sub-dirs."""
+        log_dir: Path = log_service._test_settings_mock.log_directory  # type: ignore[attr-defined]
+
+        with _mock_settings:
+            log_service.info("app", "test", "Entry")
+
+        events_file = _find_event_files(log_dir)[0]
+        path_str = str(events_file)
+        assert "os=Darwin" in path_str
+        assert "os_version=25.4.0" in path_str
+        assert "session=testsession01" in path_str
+
+    def test_distinct_sessions_write_distinct_files(self, log_service: LogService) -> None:
+        """Two installs (different session segments) don't share an events.jsonl."""
+        log_dir: Path = log_service._test_settings_mock.log_directory  # type: ignore[attr-defined]
+        settings_patch = patch(
+            "app.services.log_service.get_settings",
+            return_value=log_service._test_settings_mock,  # type: ignore[attr-defined]
+        )
+
+        with (
+            settings_patch,
+            patch(
+                "app.services.log_service.get_session_partitions",
+                return_value=["os=Darwin", "os_version=25.4.0", "session=machineAAAA"],
+            ),
+        ):
+            log_service.info("app", "from_a", "Machine A entry")
+
+        with (
+            settings_patch,
+            patch(
+                "app.services.log_service.get_session_partitions",
+                return_value=["os=Darwin", "os_version=25.4.0", "session=machineBBBB"],
+            ),
+        ):
+            log_service.info("app", "from_b", "Machine B entry")
+
+        files = _find_event_files(log_dir)
+        assert len(files) == 2
+        sessions = {p for f in files for p in str(f).split("/") if p.startswith("session=")}
+        assert sessions == {"session=machineAAAA", "session=machineBBBB"}
+
+    def test_sync_keys_include_session(self, log_service: LogService, _mock_settings: Any) -> None:
+        """S3 keys carry the session partition so installs don't overwrite each other."""
+        mock_client = MagicMock()
+
+        with _mock_settings:
+            log_service.info("app", "test", "Entry")
+            log_service.sync_logs_to_s3(mock_client, "test-bucket")
+
+        calls = mock_client.upload_file.call_args_list
+        assert len(calls) >= 1
+        for call in calls:
+            s3_key = call[0][2]
+            assert "/session=testsession01/" in s3_key
 
 
 class TestJobSaveJsonl:
@@ -415,7 +524,7 @@ class TestJobSaveJsonl:
         with _mock_settings:
             result_path = log_service.save_job_jsonl(job_id, job_dict, completed_at)
 
-        expected_dir = log_dir / "json" / "year=2026" / "month=02" / "day=08"
+        expected_dir = _session_subpath(log_dir / "json" / "year=2026" / "month=02" / "day=08")
         assert result_path == expected_dir / f"{job_id}.jsonl"
         assert result_path.exists()
 
@@ -471,7 +580,7 @@ class TestJobSaveCsv:
         with _mock_settings:
             result_path = log_service.save_job_csv(job_id, mock_job, completed_at)
 
-        expected_dir = log_dir / "csv" / "year=2026" / "month=02" / "day=08"
+        expected_dir = _session_subpath(log_dir / "csv" / "year=2026" / "month=02" / "day=08")
         assert result_path.parent == expected_dir
         assert result_path.name.startswith("upload-summary-143025-a1b2c3d4")
         assert result_path.name.endswith(".csv")
